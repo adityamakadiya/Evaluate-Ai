@@ -280,9 +280,18 @@ export default function SessionDetailPage() {
     fetch(`/api/sessions/${sessionId}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<SessionDetail>;
+        return r.json();
       })
-      .then(setSession)
+      .then((data) => {
+        // API returns { session, turns, toolEvents, analysis }
+        // Merge into the shape our component expects
+        const merged: SessionDetail = {
+          ...data.session,
+          analysis: data.analysis ? JSON.stringify(data.analysis) : null,
+          turns: data.turns ?? [],
+        };
+        setSession(merged);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [sessionId]);
@@ -339,7 +348,7 @@ export default function SessionDetailPage() {
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <h1 className="text-2xl font-semibold text-[#ededed]">
-            Session {session.id.slice(0, 8)}
+            Session {session.id?.slice(0, 8) ?? 'Unknown'}
           </h1>
           <span className="text-sm text-[#737373]">{session.model ?? 'Unknown model'}</span>
         </div>
