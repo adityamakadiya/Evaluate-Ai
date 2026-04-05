@@ -1,0 +1,29 @@
+{
+  "name": "@evaluateai/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "evalai": "./bin/evalai.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@evaluateai/core": "workspace:*",
+    "chalk": "^5.4.1",
+    "cli-table3": "^0.6.5",
+    "commander": "^13.1.0",
+    "drizzle-orm": "^0.45.2",
+    "ulid": "^2.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  }
+}

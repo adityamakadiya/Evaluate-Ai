@@ -1,0 +1,14 @@
+{
+  "name": "@evaluateai/dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'Dashboard build - Phase 4'",
+    "dev": "echo 'Dashboard dev - Phase 4'",
+    "clean": "rm -rf .next .turbo"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

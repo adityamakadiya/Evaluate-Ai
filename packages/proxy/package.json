@@ -1,0 +1,22 @@
+{
+  "name": "@evaluateai/proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@evaluateai/core": "workspace:*",
+    "fastify": "^5.2.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.1.0",
+    "typescript": "^5.8.0"
+  }
+}

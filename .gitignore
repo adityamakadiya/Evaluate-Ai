@@ -1,0 +1,32 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# SQLite
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Next.js
+.next/
+out/
+
+# Coverage
+coverage/

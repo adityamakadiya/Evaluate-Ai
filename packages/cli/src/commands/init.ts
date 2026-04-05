@@ -1,0 +1,187 @@
+import { Command } from 'commander';
+import chalk from 'chalk';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { initDb, saveSupabaseConfig } from '@evaluateai/core';
+import { getClaudeSettingsPath, ensureDataDir } from '../utils/paths.js';
+import { printHeader } from '../utils/display.js';
+
+/**
+ * The 6 Claude Code hook events we register.
+ */
+const HOOK_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'Stop',
+  'SessionEnd',
+] as const;
+
+/**
+ * Build the hooks object that should be merged into settings.json.
+ */
+function buildHooksConfig(): Record<string, unknown> {
+  const hooks: Record<string, unknown> = {};
+  for (const event of HOOK_EVENTS) {
+    hooks[event] = {
+      command: `evalai hook ${event}`,
+      timeout: 10000,
+    };
+  }
+  return hooks;
+}
+
+/**
+ * Read the existing Claude Code settings.json, or return an empty object.
+ */
+function readSettings(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Write settings back to disk.
+ */
+function writeSettings(path: string, settings: Record<string, unknown>): void {
+  writeFileSync(path, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+}
+
+/**
+ * Simple readline prompt helper.
+ */
+function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+/**
+ * Check which hooks are installed, returning status per event.
+ */
+function checkHooks(settings: Record<string, unknown>): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
+  for (const event of HOOK_EVENTS) {
+    const hook = hooks[event] as Record<string, unknown> | undefined;
+    const installed = typeof hook?.command === 'string'
+      && (hook.command as string).includes(`evalai hook ${event}`);
+    result.set(event, installed);
+  }
+  return result;
+}
+
+/**
+ * Remove all EvaluateAI hooks from settings.
+ */
+function removeHooks(settings: Record<string, unknown>): Record<string, unknown> {
+  const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
+  for (const event of HOOK_EVENTS) {
+    const hook = hooks[event] as Record<string, unknown> | undefined;
+    if (hook && typeof hook.command === 'string'
+      && (hook.command as string).includes('evalai hook')) {
+      delete hooks[event];
+    }
+  }
+  if (Object.keys(hooks).length === 0) {
+    delete settings.hooks;
+  } else {
+    settings.hooks = hooks;
+  }
+  return settings;
+}
+
+export const initCommand = new Command('init')
+  .description('Initialize EvaluateAI: install hooks, create data directory, set up database')
+  .option('--check', 'Verify that all hooks are installed')
+  .option('--uninstall', 'Remove all EvaluateAI hooks')
+  .option('--supabase', 'Configure Supabase cloud sync')
+  .action(async (opts: { check?: boolean; uninstall?: boolean; supabase?: boolean }) => {
+    const settingsPath = getClaudeSettingsPath();
+
+    // --- --check: verify installation ---
+    if (opts.check) {
+      printHeader('Hook Status');
+      const settings = readSettings(settingsPath);
+      const status = checkHooks(settings);
+      let allGood = true;
+      for (const [event, ok] of status) {
+        const icon = ok ? chalk.green('✓') : chalk.red('✗');
+        console.log(`  ${icon} ${event}`);
+        if (!ok) allGood = false;
+      }
+      console.log('');
+      if (allGood) {
+        console.log(chalk.green('  All hooks installed correctly.'));
+      } else {
+        console.log(chalk.yellow('  Some hooks are missing. Run `evalai init` to install them.'));
+      }
+      return;
+    }
+
+    // --- --uninstall: remove hooks ---
+    if (opts.uninstall) {
+      printHeader('Uninstalling Hooks');
+      const settings = readSettings(settingsPath);
+      const cleaned = removeHooks(settings);
+      writeSettings(settingsPath, cleaned);
+      console.log(chalk.green('  All EvaluateAI hooks removed from Claude Code settings.'));
+      return;
+    }
+
+    // --- --supabase: configure cloud sync ---
+    if (opts.supabase) {
+      printHeader('Supabase Configuration');
+      const url = await prompt('  Supabase URL: ');
+      const anonKey = await prompt('  Supabase Anon Key: ');
+      if (!url || !anonKey) {
+        console.log(chalk.red('  Both URL and anon key are required.'));
+        process.exit(1);
+      }
+      // Ensure DB exists first
+      ensureDataDir();
+      initDb();
+      saveSupabaseConfig({ url, anonKey });
+      console.log(chalk.green('  Supabase credentials saved.'));
+      return;
+    }
+
+    // --- Default: full init ---
+    printHeader('EvaluateAI Init');
+
+    // 1. Create data directory
+    console.log('  Creating data directory...');
+    ensureDataDir();
+    console.log(chalk.green('  ✓ ~/.evaluateai-v2/ ready'));
+
+    // 2. Initialize SQLite
+    console.log('  Initializing database...');
+    initDb();
+    console.log(chalk.green('  ✓ Database initialized'));
+
+    // 3. Install hooks into Claude Code settings
+    console.log('  Installing hooks into Claude Code...');
+    const settings = readSettings(settingsPath);
+    const existingHooks = (settings.hooks ?? {}) as Record<string, unknown>;
+    const newHooks = buildHooksConfig();
+
+    // Merge: add our hooks, preserve any others the user has
+    settings.hooks = { ...existingHooks, ...newHooks };
+    writeSettings(settingsPath, settings);
+    console.log(chalk.green('  ✓ 6 hooks installed'));
+
+    // 4. Summary
+    console.log('');
+    console.log(chalk.bold('  Setup complete!'));
+    console.log(chalk.dim('  Run `evalai init --check` to verify.'));
+    console.log(chalk.dim('  Run `evalai init --supabase` to enable cloud sync.'));
+    console.log('');
+  });
