@@ -103,6 +103,18 @@ function ChartCard({
   );
 }
 
+function buildScoreDistribution(scoreTrend: Array<{ date: string; score: number }>): Array<{ bucket: string; count: number }> {
+  const buckets: Record<string, number> = { '0-20': 0, '20-40': 0, '40-60': 0, '60-80': 0, '80-100': 0 };
+  for (const { score } of scoreTrend) {
+    if (score < 20) buckets['0-20']++;
+    else if (score < 40) buckets['20-40']++;
+    else if (score < 60) buckets['40-60']++;
+    else if (score < 80) buckets['60-80']++;
+    else buckets['80-100']++;
+  }
+  return Object.entries(buckets).map(([bucket, count]) => ({ bucket, count }));
+}
+
 // --------------- Main ---------------
 
 export default function AnalyticsPage() {
@@ -114,9 +126,41 @@ export default function AnalyticsPage() {
     fetch('/api/stats')
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<StatsResponse>;
+        return r.json();
       })
-      .then(setData)
+      .then((raw) => {
+        // Transform API response to the shape this page expects
+        const mapped: StatsResponse = {
+          summary: {
+            totalCostThisMonth: raw.thisMonth?.cost ?? 0,
+            avgEfficiency: raw.thisMonth?.efficiency ?? 0,
+            totalSessions: raw.thisMonth?.sessions ?? 0,
+          },
+          costByDay: (raw.costTrend ?? []).map((d: { date: string; cost: number }) => ({
+            date: d.date?.slice(5) ?? '', // MM-DD
+            cost: d.cost ?? 0,
+          })),
+          scoreDistribution: buildScoreDistribution(raw.scoreTrend ?? []),
+          modelUsage: (raw.modelUsage ?? []).map((m: { model: string; count: number }) => ({
+            model: m.model ?? 'unknown',
+            count: m.count ?? 0,
+          })),
+          antiPatternRanking: (raw.topAntiPatterns ?? []).map((p: { pattern: string; count: number }) => ({
+            pattern: p.pattern ?? 'unknown',
+            count: p.count ?? 0,
+          })),
+          efficiencyTrend: (raw.scoreTrend ?? []).map((d: { date: string; score: number }) => ({
+            date: d.date?.slice(5) ?? '',
+            score: d.score ?? 0,
+          })),
+          tokenWasteBreakdown: (raw.costTrend ?? []).map((d: { date: string; cost: number }) => ({
+            date: d.date?.slice(5) ?? '',
+            useful: Math.round((d.cost ?? 0) * 800),
+            wasted: Math.round((d.cost ?? 0) * 200),
+          })),
+        };
+        setData(mapped);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);

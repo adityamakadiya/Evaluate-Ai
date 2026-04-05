@@ -103,9 +103,25 @@ export default function SettingsPage() {
     fetch('/api/config')
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<Config>;
+        return r.json();
       })
-      .then(setConfig)
+      .then((raw) => {
+        // API returns { key: { value, updatedAt } } — extract just values
+        const getValue = (key: string, fallback: string) => {
+          const entry = raw[key];
+          if (!entry) return fallback;
+          return typeof entry === 'object' && entry.value !== undefined ? entry.value : String(entry);
+        };
+        const config: Config = {
+          privacy: getValue('privacy', 'local') as PrivacyMode,
+          scoring: getValue('scoring', 'llm') as ScoringMode,
+          threshold: parseInt(getValue('threshold', '50'), 10),
+          dashboardPort: parseInt(getValue('dashboard_port', '3456'), 10),
+          supabaseUrl: getValue('supabase_url', '') || undefined,
+          supabaseKey: getValue('supabase_anon_key', '') || undefined,
+        };
+        setConfig(config);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
@@ -122,12 +138,24 @@ export default function SettingsPage() {
     if (!config) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Save each config key individually
+      const entries: [string, string][] = [
+        ['privacy', config!.privacy],
+        ['scoring', config!.scoring],
+        ['threshold', String(config!.threshold)],
+        ['dashboard_port', String(config!.dashboardPort)],
+      ];
+      if (config!.supabaseUrl) entries.push(['supabase_url', config!.supabaseUrl]);
+      if (config!.supabaseKey) entries.push(['supabase_anon_key', config!.supabaseKey]);
+
+      for (const [key, value] of entries) {
+        const res = await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, value }),
+        });
+        if (!res.ok) throw new Error(`Failed to save ${key}`);
+      }
       showToast('success', 'Settings saved successfully');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Unknown error';
