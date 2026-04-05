@@ -67,9 +67,15 @@ function queryPeriodStats(since: string): PeriodStats {
     for (const t of turnRows) {
       if (!t.antiPatterns) continue;
       try {
-        const patterns: Array<{ id: string }> = JSON.parse(t.antiPatterns);
-        for (const p of patterns) {
-          antiPatterns[p.id] = (antiPatterns[p.id] ?? 0) + 1;
+        const patterns: unknown = JSON.parse(t.antiPatterns);
+        if (Array.isArray(patterns)) {
+          for (const p of patterns) {
+            // Patterns stored as string[] (e.g. ["vague_verb"]) or {id}[]
+            const id = typeof p === 'string' ? p : (p as { id?: string })?.id;
+            if (id) {
+              antiPatterns[id] = (antiPatterns[id] ?? 0) + 1;
+            }
+          }
         }
       } catch {
         // skip malformed JSON
@@ -89,11 +95,16 @@ function queryPeriodStats(since: string): PeriodStats {
 }
 
 const TIPS: Record<string, string> = {
-  'vague-prompt': 'Try adding specific filenames and expected outcomes to your prompts.',
-  'no-context': 'Include relevant file paths or code snippets for better results.',
-  'too-broad': 'Break large requests into focused, single-task prompts.',
-  'retry-spam': 'When something fails, add new context instead of repeating the same prompt.',
-  'no-constraints': 'Specify constraints like language, framework, or approach.',
+  'vague_verb': 'Add specific file paths, function names, and error messages to your prompts.',
+  'paraphrased_error': 'Paste the exact error message in backticks instead of describing it.',
+  'too_short': 'Add more context — file path, function name, expected behavior.',
+  'retry_detected': 'Explain what was wrong with the prior answer instead of repeating.',
+  'no_file_ref': 'Include the file path and function name for code-related questions.',
+  'multi_question': 'Split into one question per turn for better results.',
+  'overlong_prompt': 'Split long prompts into task description + separate context.',
+  'no_expected_output': 'Describe what success looks like for better first-try results.',
+  'unanchored_ref': "Re-state what 'it' or 'that' refers to — the AI may lose context.",
+  'filler_words': 'Remove "please", "could you" etc. — saves tokens with no quality loss.',
 };
 
 function printStats(label: string, stats: PeriodStats, prev?: PeriodStats): void {
