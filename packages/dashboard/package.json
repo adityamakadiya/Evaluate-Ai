@@ -3,12 +3,29 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "echo 'Dashboard build - Phase 4'",
-    "dev": "echo 'Dashboard dev - Phase 4'",
+    "dev": "next dev --port 3456",
+    "build": "next build",
+    "start": "next start --port 3456",
     "clean": "rm -rf .next .turbo"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@evaluateai/core": "workspace:*",
+    "better-sqlite3": "^12.8.0",
+    "lucide-react": "^0.500.0",
+    "next": "16.2.2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^2.15.0"
+  },
   "devDependencies": {
-    "typescript": "^5.8.0"
+    "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
   }
 }
