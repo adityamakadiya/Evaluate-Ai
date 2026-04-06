@@ -89,6 +89,7 @@ export interface HeuristicResult {
   antiPatterns: AntiPattern[];
   positiveSignals: string[];
   quickTip: string | null;
+  intent?: string; // 'research' | 'debug' | 'feature' | 'refactor' | 'review' | 'generate' | 'config' | 'general'
 }
 
 export interface LLMScoreBreakdown {

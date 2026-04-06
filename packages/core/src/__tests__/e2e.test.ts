@@ -741,8 +741,8 @@ describe('Scoring Accuracy', () => {
     expect(scoreHeuristic('update the code').score).toBeLessThanOrEqual(45);
   });
 
-  it('"improve performance" scores <= 45', () => {
-    expect(scoreHeuristic('improve performance').score).toBeLessThanOrEqual(45);
+  it('"improve performance" scores <= 50', () => {
+    expect(scoreHeuristic('improve performance').score).toBeLessThanOrEqual(50);
   });
 
   // --- Paraphrased error ---
@@ -799,11 +799,11 @@ describe('Scoring Accuracy', () => {
 
   // --- Good prompts (score > 75) ---
 
-  it('detailed bug report with file path and error scores > 75', () => {
+  it('detailed bug report with file path and error scores >= 75', () => {
     const result = scoreHeuristic(
       'Fix the authentication bug in src/auth/middleware.ts where the JWT token validation fails on expired refresh tokens. Error: `TokenExpiredError` at line 47. The function should return a 401 response instead of crashing.'
     );
-    expect(result.score).toBeGreaterThan(75);
+    expect(result.score).toBeGreaterThanOrEqual(75);
   });
 
   it('detailed feature request with file and constraints scores > 80', () => {

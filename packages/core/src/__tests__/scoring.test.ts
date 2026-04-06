@@ -156,16 +156,16 @@ describe('scoreHeuristic — anti-patterns', () => {
     expect(result.antiPatterns.some(p => p.id === 'overlong_prompt')).toBe(false);
   });
 
-  it('detects no_expected_output (medium, -10)', () => {
-    // Over 80 chars, no "should/expected/want/..." keywords
+  it('detects no_expected_output (medium, -8)', () => {
+    // Over 100 chars, no "should/expected/want/..." keywords, classified as debug (which includes no_expected_output)
     const prompt =
-      'I have a large React application with many components and services that connect to a backend API through REST endpoints';
-    expect(prompt.length).toBeGreaterThan(80);
+      'There is a bug in the authentication module that causes the server to crash when processing concurrent API requests from multiple clients simultaneously';
+    expect(prompt.length).toBeGreaterThan(100);
     const result = scoreHeuristic(prompt);
     const ap = result.antiPatterns.find(p => p.id === 'no_expected_output');
     expect(ap).toBeDefined();
     expect(ap!.severity).toBe('medium');
-    expect(ap!.points).toBe(10);
+    expect(ap!.points).toBe(8);
   });
 
   it('does NOT flag no_expected_output when "should" keyword present', () => {
@@ -175,9 +175,9 @@ describe('scoreHeuristic — anti-patterns', () => {
     expect(result.antiPatterns.some(p => p.id === 'no_expected_output')).toBe(false);
   });
 
-  it('does NOT flag no_expected_output for short prompts (<=80 chars)', () => {
+  it('does NOT flag no_expected_output for short prompts (<=100 chars)', () => {
     const prompt = 'A short prompt with no keywords about expectations or output';
-    expect(prompt.length).toBeLessThanOrEqual(80);
+    expect(prompt.length).toBeLessThanOrEqual(100);
     const result = scoreHeuristic(prompt);
     expect(result.antiPatterns.some(p => p.id === 'no_expected_output')).toBe(false);
   });
@@ -203,14 +203,14 @@ describe('scoreHeuristic — anti-patterns', () => {
     }
   });
 
-  it('detects filler_words (low, -5)', () => {
+  it('detects filler_words (low, -3)', () => {
     const result = scoreHeuristic(
       'Could you please refactor the authentication middleware to use async await instead of callbacks'
     );
     const ap = result.antiPatterns.find(p => p.id === 'filler_words');
     expect(ap).toBeDefined();
     expect(ap!.severity).toBe('low');
-    expect(ap!.points).toBe(5);
+    expect(ap!.points).toBe(3);
   });
 
   it('detects filler_words for various phrases', () => {
@@ -231,7 +231,7 @@ describe('scoreHeuristic — anti-patterns', () => {
       'no_file_ref', 'multi_question', 'overlong_prompt', 'no_expected_output',
       'unanchored_ref', 'filler_words',
     ];
-    const actualIds = ANTI_PATTERNS.map(p => p.id);
+    const actualIds = Object.keys(ANTI_PATTERNS);
     for (const id of expectedIds) {
       expect(actualIds).toContain(id);
     }
@@ -285,7 +285,7 @@ describe('scoreHeuristic — positive signals', () => {
 
   it('all 4 positive signal IDs are defined', () => {
     const expectedIds = ['has_file_path', 'has_code_block', 'has_error_msg', 'has_constraints'];
-    const actualIds = POSITIVE_SIGNALS.map(s => s.id);
+    const actualIds = Object.keys(POSITIVE_SIGNALS);
     for (const id of expectedIds) {
       expect(actualIds).toContain(id);
     }
@@ -343,13 +343,15 @@ describe('scoreHeuristic — clamping', () => {
 
 describe('scoreHeuristic — combined patterns', () => {
   it('subtracts all matching anti-patterns from baseline', () => {
-    // filler_words(-5) + no_expected_output(-10) should apply
+    // Classified as "review" (baseline 75), filler_words(-3) applies
     const prompt =
       'Could you look at the React application and see what happens with the data processing pipeline when it runs with large datasets on production';
     const result = scoreHeuristic(prompt);
     const deductions = result.antiPatterns.reduce((sum, p) => sum + p.points, 0);
+    // Review intent baseline is 75
+    const baseline = 75;
     const bonuses = result.positiveSignals.length * 10;
-    expect(result.score).toBe(Math.max(0, Math.min(100, 70 - deductions + bonuses)));
+    expect(result.score).toBe(Math.max(0, Math.min(100, baseline - deductions + bonuses)));
   });
 
   it('positive signals offset anti-pattern deductions', () => {
