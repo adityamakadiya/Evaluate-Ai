@@ -1,32 +1,240 @@
 @import "tailwindcss";
 
+/* ──────────────────────────────────────────────
+   Design Tokens
+   ────────────────────────────────────────────── */
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  --card: #141414;
-  --card-border: #262626;
-  --accent: #3b82f6;
-  --accent-green: #22c55e;
-  --accent-yellow: #eab308;
-  --accent-red: #ef4444;
-  --muted: #737373;
+  /* Backgrounds */
+  --bg-primary:       #0a0a0a;
+  --bg-secondary:     #111111;
+  --bg-card:          #141414;
+  --bg-elevated:      #1a1a1a;
+  --bg-input:         #0a0a0a;
+
+  /* Borders */
+  --border-primary:   #262626;
+  --border-hover:     #404040;
+  --border-focus:     #8b5cf6;
+
+  /* Text */
+  --text-primary:     #ededed;
+  --text-secondary:   #a3a3a3;
+  --text-muted:       #737373;
+  --text-inverse:     #0a0a0a;
+
+  /* Brand / Accent */
+  --accent-primary:   #8b5cf6;
+  --accent-hover:     #7c3aed;
+  --accent-secondary: #3b82f6;
+  --accent-purple:    #8b5cf6;
+  --accent-purple-glow: rgba(139, 92, 246, 0.15);
+
+  /* Semantic — Scores */
+  --score-excellent:  #22c55e;
+  --score-good:       #3b82f6;
+  --score-warning:    #eab308;
+  --score-poor:       #ef4444;
+
+  /* Semantic — Status */
+  --status-success:   #22c55e;
+  --status-warning:   #f59e0b;
+  --status-error:     #ef4444;
+  --status-info:      #3b82f6;
+
+  /* Chart Colors */
+  --chart-purple:     #8b5cf6;
+  --chart-blue:       #3b82f6;
+  --chart-cyan:       #06b6d4;
+  --chart-green:      #22c55e;
+  --chart-orange:     #f97316;
+  --chart-pink:       #ec4899;
+  --chart-yellow:     #eab308;
+
+  /* Typography */
+  --font-sans:        var(--font-inter), system-ui, -apple-system, sans-serif;
+
+  /* Spacing */
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-3:  0.75rem;
+  --space-4:  1rem;
+  --space-5:  1.25rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Radius */
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
 }
 
+/* ──────────────────────────────────────────────
+   Tailwind Theme Inline
+   ────────────────────────────────────────────── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-border: var(--card-border);
-  --color-accent: var(--accent);
-  --color-accent-green: var(--accent-green);
-  --color-accent-yellow: var(--accent-yellow);
-  --color-accent-red: var(--accent-red);
-  --color-muted: var(--muted);
-  --font-sans: var(--font-inter);
+  --color-bg-primary:       var(--bg-primary);
+  --color-bg-secondary:     var(--bg-secondary);
+  --color-bg-card:          var(--bg-card);
+  --color-bg-elevated:      var(--bg-elevated);
+  --color-border-primary:   var(--border-primary);
+  --color-border-hover:     var(--border-hover);
+  --color-text-primary:     var(--text-primary);
+  --color-text-secondary:   var(--text-secondary);
+  --color-text-muted:       var(--text-muted);
+  --color-accent:           var(--accent-primary);
+  --color-accent-secondary: var(--accent-secondary);
+  --color-accent-purple:    var(--accent-purple);
+  --color-score-excellent:  var(--score-excellent);
+  --color-score-good:       var(--score-good);
+  --color-score-warning:    var(--score-warning);
+  --color-score-poor:       var(--score-poor);
+  --color-foreground:       var(--text-primary);
+  --color-muted:            var(--text-muted);
+  --font-sans:              var(--font-inter);
 }
 
+/* ──────────────────────────────────────────────
+   Base Styles
+   ────────────────────────────────────────────── */
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-inter), system-ui, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
 }
+
+/* Subtle grain texture overlay */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* ──────────────────────────────────────────────
+   Selection
+   ────────────────────────────────────────────── */
+::selection {
+  background: rgba(139, 92, 246, 0.35);
+  color: #fff;
+}
+
+/* ──────────────────────────────────────────────
+   Focus Ring
+   ────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent-purple);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-purple-glow);
+}
+
+/* ──────────────────────────────────────────────
+   Scrollbar (dark theme)
+   ────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+
+/* ──────────────────────────────────────────────
+   Keyframe Animations
+   ────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 8px rgba(139, 92, 246, 0.2); }
+  50%      { box-shadow: 0 0 20px rgba(139, 92, 246, 0.4); }
+}
+
+/* ──────────────────────────────────────────────
+   Utility Classes
+   ────────────────────────────────────────────── */
+
+/* Standard card */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+}
+
+/* Purple glow shadow */
+.glow {
+  box-shadow:
+    0 0 15px rgba(139, 92, 246, 0.15),
+    0 0 45px rgba(139, 92, 246, 0.05);
+}
+
+/* Shimmer for skeleton loading */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-card) 25%,
+    var(--bg-elevated) 50%,
+    var(--bg-card) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Staggered fade-in for sections */
+.animate-section {
+  animation: slideUp 0.5s ease-out both;
+}
+
+.animate-section:nth-child(1) { animation-delay: 0ms; }
+.animate-section:nth-child(2) { animation-delay: 80ms; }
+.animate-section:nth-child(3) { animation-delay: 160ms; }
+.animate-section:nth-child(4) { animation-delay: 240ms; }
+.animate-section:nth-child(5) { animation-delay: 320ms; }

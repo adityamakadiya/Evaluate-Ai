@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Settings,
 } from 'lucide-react';
 
 // --------------- Types ---------------
@@ -34,18 +35,25 @@ function SectionCard({
   title,
   icon,
   children,
+  description,
 }: {
   title: string;
   icon: React.ReactNode;
   children: React.ReactNode;
+  description?: string;
 }) {
   return (
-    <div className="bg-[#141414] border border-[#262626] rounded-lg p-6">
-      <h3 className="text-base font-medium text-[#ededed] mb-4 flex items-center gap-2">
-        {icon}
-        {title}
-      </h3>
-      {children}
+    <div className="bg-[#141414] border border-[#262626] rounded-lg p-6 hover:border-[#333] transition-colors">
+      <div className="flex items-center gap-3 mb-1">
+        <div className="w-8 h-8 rounded-lg bg-[#1a1a1a] flex items-center justify-center flex-shrink-0">
+          {icon}
+        </div>
+        <h3 className="text-sm font-semibold text-[#ededed] uppercase tracking-wider">{title}</h3>
+      </div>
+      {description && (
+        <p className="text-xs text-[#404040] mb-4 ml-11">{description}</p>
+      )}
+      <div className="mt-4">{children}</div>
     </div>
   );
 }
@@ -65,21 +73,40 @@ function RadioOption({
   description: string;
   onChange: (v: string) => void;
 }) {
+  const selected = currentValue === value;
+
   return (
-    <label className="flex items-start gap-3 cursor-pointer group">
+    <label
+      className={`flex items-start gap-3.5 cursor-pointer group p-3.5 rounded-lg border transition-all ${
+        selected
+          ? 'bg-purple-900/10 border-purple-800/40'
+          : 'bg-transparent border-transparent hover:bg-[#1a1a1a]'
+      }`}
+    >
+      <div className="mt-0.5 flex-shrink-0">
+        <div
+          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${
+            selected
+              ? 'border-purple-500 bg-purple-500'
+              : 'border-[#404040] group-hover:border-[#525252]'
+          }`}
+        >
+          {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+        </div>
+      </div>
       <input
         type="radio"
         name={name}
         value={value}
-        checked={currentValue === value}
+        checked={selected}
         onChange={() => onChange(value)}
-        className="mt-1 w-4 h-4 accent-blue-500"
+        className="sr-only"
       />
       <div>
-        <span className="text-sm text-[#ededed] group-hover:text-white transition-colors">
+        <span className={`text-sm font-medium transition-colors ${selected ? 'text-[#ededed]' : 'text-[#a3a3a3] group-hover:text-[#ededed]'}`}>
           {label}
         </span>
-        <p className="text-xs text-[#737373] mt-0.5">{description}</p>
+        <p className="text-xs text-[#525252] mt-0.5 leading-relaxed">{description}</p>
       </div>
     </label>
   );
@@ -102,7 +129,7 @@ export default function SettingsPage() {
         return r.json();
       })
       .then((raw) => {
-        // API returns { key: { value, updatedAt } } — extract just values
+        // API returns { key: { value, updatedAt } } -- extract just values
         const getValue = (key: string, fallback: string) => {
           const entry = raw[key];
           if (!entry) return fallback;
@@ -190,18 +217,21 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#737373]" />
+      <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+          <span className="text-sm text-[#525252]">Loading settings...</span>
+        </div>
       </div>
     );
   }
 
   if (error || !config) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6">
+      <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8">
         <div className="max-w-3xl mx-auto">
-          <h1 className="text-2xl font-semibold text-[#ededed] mb-4">Settings</h1>
-          <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 text-red-300">
+          <h1 className="text-2xl font-bold text-[#ededed] mb-4">Settings</h1>
+          <div className="bg-red-900/20 border border-red-800/50 rounded-lg p-5 text-red-300 text-sm">
             Failed to load settings: {error ?? 'Unknown error'}
           </div>
         </div>
@@ -209,47 +239,70 @@ export default function SettingsPage() {
     );
   }
 
+  const hooks = [
+    { name: 'SessionStart', status: true },
+    { name: 'UserPromptSubmit', status: true },
+    { name: 'PreToolUse', status: true },
+    { name: 'PostToolUse', status: true },
+    { name: 'Stop', status: true },
+    { name: 'SessionEnd', status: true },
+  ];
+
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-6 relative">
-      {/* Toast */}
+    <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8 relative">
+      {/* Toast notification */}
       {toast && (
         <div
-          className={`fixed top-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border text-sm shadow-lg transition-all ${
+          className={`fixed top-6 right-6 z-50 flex items-center gap-2.5 px-5 py-3.5 rounded-lg border text-sm shadow-xl transition-all animate-in slide-in-from-top-2 ${
             toast.type === 'success'
-              ? 'bg-emerald-900/60 border-emerald-700 text-emerald-300'
-              : 'bg-red-900/60 border-red-700 text-red-300'
+              ? 'bg-emerald-900/70 border-emerald-700/50 text-emerald-300 shadow-emerald-900/20'
+              : 'bg-red-900/70 border-red-700/50 text-red-300 shadow-red-900/20'
           }`}
+          style={{ backdropFilter: 'blur(12px)' }}
         >
           {toast.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4" />
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
           ) : (
-            <XCircle className="w-4 h-4" />
+            <XCircle className="w-4 h-4 flex-shrink-0" />
           )}
-          {toast.message}
+          <span className="font-medium">{toast.message}</span>
         </div>
       )}
 
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold text-[#ededed]">Settings</h1>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-purple-900/30 flex items-center justify-center">
+                <Settings className="w-5 h-5 text-purple-400" />
+              </div>
+              <h1 className="text-2xl font-bold text-[#ededed] tracking-tight">Settings</h1>
+            </div>
+            <p className="text-sm text-[#404040] mt-2 ml-12">Configure EvaluateAI behavior and preferences</p>
+          </div>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-all shadow-sm shadow-purple-900/30 hover:shadow-purple-900/40"
           >
             {saving ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <Save className="w-4 h-4" />
             )}
-            Save Settings
+            {saving ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* Privacy Mode */}
-          <SectionCard title="Privacy Mode" icon={<Shield className="w-4 h-4 text-blue-400" />}>
-            <div className="space-y-3">
+          <SectionCard
+            title="Privacy Mode"
+            icon={<Shield className="w-4 h-4 text-blue-400" />}
+            description="Control how your prompt data is stored"
+          >
+            <div className="space-y-1.5">
               <RadioOption
                 name="privacy"
                 value="off"
@@ -263,7 +316,7 @@ export default function SettingsPage() {
                 value="local"
                 currentValue={config.privacy}
                 label="Local Only"
-                description="Store prompts only in local SQLite. Never send to external services."
+                description="Store prompts only in local SQLite. Never sent to external services."
                 onChange={(v) => updateConfig('privacy', v as PrivacyMode)}
               />
               <RadioOption
@@ -278,8 +331,12 @@ export default function SettingsPage() {
           </SectionCard>
 
           {/* Scoring Mode */}
-          <SectionCard title="Scoring Mode" icon={<Brain className="w-4 h-4 text-purple-400" />}>
-            <div className="space-y-3">
+          <SectionCard
+            title="Scoring Mode"
+            icon={<Brain className="w-4 h-4 text-purple-400" />}
+            description="Choose how prompts are evaluated"
+          >
+            <div className="space-y-1.5">
               <RadioOption
                 name="scoring"
                 value="heuristic"
@@ -303,25 +360,31 @@ export default function SettingsPage() {
           <SectionCard
             title="Suggestion Threshold"
             icon={<Sliders className="w-4 h-4 text-yellow-400" />}
+            description="Show improvement suggestions when score is below this value"
           >
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-[#737373]">
-                  Show improvement suggestions when score is below this threshold.
-                </p>
-                <span className="text-lg font-semibold text-[#ededed] min-w-[3rem] text-right">
-                  {config.threshold}
-                </span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-bold text-[#ededed]">{config.threshold}</span>
+                  <span className="text-sm text-[#404040]">/ 100</span>
+                </div>
               </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={config.threshold}
-                onChange={(e) => updateConfig('threshold', Number(e.target.value))}
-                className="w-full h-2 bg-[#262626] rounded-full appearance-none cursor-pointer accent-blue-500"
-              />
-              <div className="flex justify-between text-xs text-[#737373] mt-1">
+              <div className="relative">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={config.threshold}
+                  onChange={(e) => updateConfig('threshold', Number(e.target.value))}
+                  className="w-full h-2 bg-[#1a1a1a] rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-purple-500 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#141414] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:transition-all [&::-webkit-slider-thumb]:hover:bg-purple-400"
+                />
+                {/* Track fill */}
+                <div
+                  className="absolute top-0 left-0 h-2 bg-purple-600/50 rounded-full pointer-events-none"
+                  style={{ width: `${config.threshold}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[11px] text-[#333] mt-2 font-medium">
                 <span>0 (never)</span>
                 <span>50</span>
                 <span>100 (always)</span>
@@ -333,73 +396,56 @@ export default function SettingsPage() {
           <SectionCard
             title="Dashboard Port"
             icon={<Monitor className="w-4 h-4 text-cyan-400" />}
+            description="Port for the dashboard web server. Requires restart."
           >
-            <div>
-              <p className="text-sm text-[#737373] mb-2">
-                Port for the dashboard web server. Requires restart to take effect.
-              </p>
-              <input
-                type="number"
-                min={1024}
-                max={65535}
-                value={config.dashboardPort}
-                onChange={(e) => updateConfig('dashboardPort', Number(e.target.value))}
-                className="w-40 bg-[#0a0a0a] border border-[#262626] rounded-lg px-3 py-2 text-sm text-[#ededed] focus:outline-none focus:border-[#404040] transition-colors"
-              />
-            </div>
+            <input
+              type="number"
+              min={1024}
+              max={65535}
+              value={config.dashboardPort}
+              onChange={(e) => updateConfig('dashboardPort', Number(e.target.value))}
+              className="w-40 bg-[#0a0a0a] border border-[#262626] rounded-lg px-3.5 py-2.5 text-sm text-[#ededed] font-mono focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-all"
+            />
           </SectionCard>
 
-          {/* Supabase — configured via environment variables */}
+          {/* Supabase */}
           <SectionCard
             title="Supabase Cloud Sync"
             icon={<Database className="w-4 h-4 text-emerald-400" />}
+            description="Configured via environment variables"
           >
-            <p className="text-sm text-[#737373] mb-2">
-              Supabase is configured via environment variables. Set these in your shell or <code className="text-[#ededed] bg-[#262626] px-1.5 py-0.5 rounded text-xs">~/.evaluateai-v2/.env</code>:
-            </p>
-            <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-3 font-mono text-xs text-[#ededed]">
-              <div>SUPABASE_URL=https://your-project.supabase.co</div>
-              <div>SUPABASE_ANON_KEY=your-anon-key</div>
+            <div>
+              <p className="text-xs text-[#525252] mb-3">
+                Set these in your shell or <code className="text-[#a3a3a3] bg-[#1a1a1a] px-1.5 py-0.5 rounded text-[11px] font-mono">~/.evaluateai-v2/.env</code>
+              </p>
+              <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-4 font-mono text-xs text-[#737373] space-y-1">
+                <div><span className="text-purple-400">SUPABASE_URL</span>=<span className="text-[#525252]">https://your-project.supabase.co</span></div>
+                <div><span className="text-purple-400">SUPABASE_ANON_KEY</span>=<span className="text-[#525252]">your-anon-key</span></div>
+              </div>
+              <p className="text-xs text-[#404040] mt-3">
+                Then run <code className="text-[#a3a3a3] bg-[#1a1a1a] px-1.5 py-0.5 rounded text-[11px] font-mono">evalai sync</code> to push data to the cloud.
+              </p>
             </div>
-            <p className="text-sm text-[#737373] mt-2">
-              Then run <code className="text-[#ededed] bg-[#262626] px-1.5 py-0.5 rounded text-xs">evalai sync</code> to push data to the cloud.
-            </p>
           </SectionCard>
 
           {/* Hook Status */}
           <SectionCard
             title="Hook Status"
             icon={<CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+            description="All Claude Code hooks are active and monitoring"
           >
-            <div className="space-y-2">
-              {[
-                { name: 'SessionStart', status: true },
-                { name: 'UserPromptSubmit', status: true },
-                { name: 'PreToolUse', status: true },
-                { name: 'PostToolUse', status: true },
-                { name: 'Stop', status: true },
-                { name: 'SessionEnd', status: true },
-              ].map((hook) => (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {hooks.map((hook) => (
                 <div
                   key={hook.name}
-                  className="flex items-center justify-between py-1.5 px-3 bg-[#0a0a0a] rounded-md"
+                  className="flex items-center gap-2.5 py-2.5 px-3.5 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg"
                 >
-                  <span className="text-sm text-[#ededed] font-mono">{hook.name}</span>
-                  <span
-                    className={`text-xs flex items-center gap-1 ${
-                      hook.status ? 'text-emerald-400' : 'text-red-400'
-                    }`}
-                  >
-                    {hook.status ? (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Active
-                      </>
-                    ) : (
-                      <>
-                        <XCircle className="w-3.5 h-3.5" /> Inactive
-                      </>
-                    )}
-                  </span>
+                  {hook.status ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                  )}
+                  <span className="text-xs text-[#a3a3a3] font-mono truncate">{hook.name}</span>
                 </div>
               ))}
             </div>
@@ -409,11 +455,12 @@ export default function SettingsPage() {
           <SectionCard
             title="Data Management"
             icon={<AlertTriangle className="w-4 h-4 text-orange-400" />}
+            description="Export or reset your EvaluateAI data"
           >
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleExport}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm border border-[#262626] rounded-lg text-[#ededed] hover:bg-[#1a1a1a] transition-colors"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium border border-[#262626] rounded-lg text-[#a3a3a3] hover:text-[#ededed] hover:bg-[#1a1a1a] hover:border-[#333] transition-all"
               >
                 <Download className="w-4 h-4" /> Export Data
               </button>
@@ -421,22 +468,22 @@ export default function SettingsPage() {
               {!showResetConfirm ? (
                 <button
                   onClick={() => setShowResetConfirm(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2 text-sm border border-red-800 rounded-lg text-red-400 hover:bg-red-900/20 transition-colors"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium border border-red-900/40 rounded-lg text-red-400/80 hover:text-red-400 hover:bg-red-900/10 hover:border-red-800/50 transition-all"
                 >
                   <Trash2 className="w-4 h-4" /> Reset All Data
                 </button>
               ) : (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-red-400">Are you sure?</span>
+                <div className="flex items-center gap-2.5 bg-red-900/10 border border-red-900/30 rounded-lg px-4 py-2.5">
+                  <span className="text-sm text-red-400 font-medium">Are you sure?</span>
                   <button
                     onClick={handleReset}
-                    className="px-3 py-1.5 text-sm bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors"
+                    className="px-3 py-1.5 text-xs font-semibold bg-red-700 hover:bg-red-600 text-white rounded-md transition-colors"
                   >
-                    Yes, Reset
+                    Confirm
                   </button>
                   <button
                     onClick={() => setShowResetConfirm(false)}
-                    className="px-3 py-1.5 text-sm border border-[#262626] text-[#ededed] rounded-lg hover:bg-[#1a1a1a] transition-colors"
+                    className="px-3 py-1.5 text-xs font-medium border border-[#262626] text-[#a3a3a3] rounded-md hover:bg-[#1a1a1a] transition-colors"
                   >
                     Cancel
                   </button>
@@ -444,6 +491,22 @@ export default function SettingsPage() {
               )}
             </div>
           </SectionCard>
+        </div>
+
+        {/* Bottom save button (mobile) */}
+        <div className="mt-8 flex justify-end sm:hidden">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-all"
+          >
+            {saving ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
         </div>
       </div>
     </div>

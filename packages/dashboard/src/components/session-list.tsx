@@ -1,6 +1,7 @@
 'use client';
 
-import { Clock } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Clock, ArrowUpRight } from 'lucide-react';
 
 export interface SessionItem {
   id: string;
@@ -28,52 +29,126 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function scoreColor(score: number | null): string {
-  if (score === null) return 'text-[#737373]';
-  if (score >= 70) return 'text-emerald-400';
-  if (score >= 40) return 'text-yellow-400';
-  return 'text-red-400';
+function scoreBadge(score: number | null) {
+  if (score === null) {
+    return (
+      <span className="inline-flex items-center rounded-md bg-white/[0.05] px-2 py-0.5 text-xs font-medium text-[var(--text-muted)]">
+        --
+      </span>
+    );
+  }
+
+  let bg: string;
+  let text: string;
+  if (score >= 80) {
+    bg = 'bg-emerald-500/10';
+    text = 'text-emerald-400';
+  } else if (score >= 60) {
+    bg = 'bg-blue-500/10';
+    text = 'text-blue-400';
+  } else if (score >= 40) {
+    bg = 'bg-yellow-500/10';
+    text = 'text-yellow-400';
+  } else {
+    bg = 'bg-red-500/10';
+    text = 'text-red-400';
+  }
+
+  return (
+    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums ${bg} ${text}`}>
+      {Math.round(score)}
+    </span>
+  );
+}
+
+function intentBadge(task: string) {
+  const lower = task.toLowerCase();
+  let intent = 'general';
+  let color = 'bg-[var(--accent-purple)]/10 text-[#a78bfa]';
+
+  if (lower.includes('fix') || lower.includes('bug') || lower.includes('debug')) {
+    intent = 'fix';
+    color = 'bg-red-500/10 text-red-400';
+  } else if (lower.includes('refactor') || lower.includes('clean')) {
+    intent = 'refactor';
+    color = 'bg-cyan-500/10 text-cyan-400';
+  } else if (lower.includes('test') || lower.includes('spec')) {
+    intent = 'test';
+    color = 'bg-yellow-500/10 text-yellow-400';
+  } else if (lower.includes('add') || lower.includes('create') || lower.includes('implement') || lower.includes('build')) {
+    intent = 'feature';
+    color = 'bg-emerald-500/10 text-emerald-400';
+  } else if (lower.includes('explain') || lower.includes('what') || lower.includes('how') || lower.includes('why')) {
+    intent = 'question';
+    color = 'bg-blue-500/10 text-blue-400';
+  }
+
+  return (
+    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${color}`}>
+      {intent}
+    </span>
+  );
 }
 
 export function SessionList({ sessions }: SessionListProps) {
+  const router = useRouter();
+
   if (sessions.length === 0) {
     return (
-      <div className="rounded-lg border border-[#262626] bg-[#141414] p-5">
-        <h3 className="mb-4 text-sm font-medium text-[#ededed]">Recent Sessions</h3>
-        <p className="text-sm text-[#737373]">No sessions recorded yet.</p>
+      <div className="card">
+        <h3 className="mb-4 text-sm font-medium text-[var(--text-primary)]">Recent Sessions</h3>
+        <div className="flex flex-col items-center py-8 text-center">
+          <p className="text-sm text-[var(--text-muted)]">No sessions recorded yet.</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-[#262626] bg-[#141414] p-5">
-      <h3 className="mb-4 text-sm font-medium text-[#ededed]">Recent Sessions</h3>
-      <div className="overflow-x-auto">
+    <div className="card">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-[var(--text-primary)]">Recent Sessions</h3>
+        <button
+          onClick={() => router.push('/sessions')}
+          className="flex items-center gap-1 text-xs font-medium text-[var(--text-muted)] transition-colors hover:text-[var(--accent-purple)]"
+        >
+          View all
+          <ArrowUpRight className="h-3 w-3" />
+        </button>
+      </div>
+      <div className="overflow-x-auto -mx-5">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-[#262626] text-left text-xs text-[#737373]">
-              <th className="pb-2 pr-4 font-medium">Task</th>
-              <th className="pb-2 pr-4 font-medium">Turns</th>
-              <th className="pb-2 pr-4 font-medium">Cost</th>
-              <th className="pb-2 pr-4 font-medium">Score</th>
-              <th className="pb-2 font-medium">Time</th>
+            <tr className="border-b border-[var(--border-primary)] text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <th className="pb-3 pl-5 pr-4">Task</th>
+              <th className="pb-3 pr-4">Intent</th>
+              <th className="pb-3 pr-4">Turns</th>
+              <th className="pb-3 pr-4">Cost</th>
+              <th className="pb-3 pr-4">Score</th>
+              <th className="pb-3 pr-5">Time</th>
             </tr>
           </thead>
           <tbody>
             {sessions.map((s) => (
               <tr
                 key={s.id}
-                className="border-b border-[#262626]/50 last:border-0"
+                onClick={() => router.push(`/sessions/${s.id}`)}
+                className="group cursor-pointer border-b border-[var(--border-primary)]/50 transition-colors last:border-0 hover:bg-white/[0.02]"
               >
-                <td className="max-w-[280px] truncate py-2.5 pr-4 text-[#ededed]">
+                <td className="max-w-[260px] truncate py-3 pl-5 pr-4 text-[var(--text-primary)] group-hover:text-[var(--accent-purple)] transition-colors">
                   {s.task}
                 </td>
-                <td className="py-2.5 pr-4 text-[#737373]">{s.turns}</td>
-                <td className="py-2.5 pr-4 text-[#ededed]">${s.cost.toFixed(2)}</td>
-                <td className={`py-2.5 pr-4 font-medium ${scoreColor(s.score)}`}>
-                  {s.score !== null ? `${Math.round(s.score)}/100` : '--'}
+                <td className="py-3 pr-4">
+                  {intentBadge(s.task)}
                 </td>
-                <td className="py-2.5 text-[#737373]">
+                <td className="py-3 pr-4 tabular-nums text-[var(--text-muted)]">{s.turns}</td>
+                <td className="py-3 pr-4 tabular-nums text-[var(--text-primary)]">
+                  ${s.cost.toFixed(2)}
+                </td>
+                <td className="py-3 pr-4">
+                  {scoreBadge(s.score)}
+                </td>
+                <td className="py-3 pr-5 text-[var(--text-muted)]">
                   <span className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
                     {timeAgo(s.startedAt)}

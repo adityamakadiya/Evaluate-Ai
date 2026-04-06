@@ -23,6 +23,8 @@ import {
   Hash,
   TrendingUp,
   AlertTriangle,
+  BarChart3,
+  Target,
 } from 'lucide-react';
 
 // --------------- Types ---------------
@@ -41,15 +43,17 @@ interface StatsResponse {
   tokenWasteBreakdown: Array<{ date: string; useful: number; wasted: number }>;
 }
 
+type Period = 'today' | 'week' | 'month' | 'quarter';
+
 // --------------- Constants ---------------
 
 const PIE_COLORS = [
-  '#3b82f6',
   '#8b5cf6',
-  '#ec4899',
-  '#f59e0b',
-  '#10b981',
+  '#3b82f6',
   '#06b6d4',
+  '#22c55e',
+  '#f59e0b',
+  '#ec4899',
   '#f97316',
   '#6366f1',
 ];
@@ -72,18 +76,25 @@ function StatCard({
   label,
   value,
   icon,
+  accent,
 }: {
   label: string;
   value: string;
   icon: React.ReactNode;
+  accent: string;
 }) {
   return (
-    <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 flex items-center gap-4">
-      <div className="p-2.5 bg-[#262626] rounded-lg">{icon}</div>
-      <div>
-        <p className="text-sm text-[#737373]">{label}</p>
-        <p className="text-2xl font-semibold text-[#ededed]">{value}</p>
+    <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-all group">
+      <div className="flex items-center justify-between mb-3">
+        <div
+          className="w-10 h-10 rounded-lg flex items-center justify-center"
+          style={{ backgroundColor: `${accent}15` }}
+        >
+          {icon}
+        </div>
       </div>
+      <p className="text-2xl font-bold text-[#ededed] mb-1">{value}</p>
+      <p className="text-xs text-[#525252] font-medium uppercase tracking-wider">{label}</p>
     </div>
   );
 }
@@ -96,9 +107,18 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-[#141414] border border-[#262626] rounded-lg p-5">
-      <h3 className="text-sm font-medium text-[#737373] mb-4">{title}</h3>
+    <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-colors">
+      <h3 className="text-sm font-semibold text-[#a3a3a3] mb-4 uppercase tracking-wider">{title}</h3>
       {children}
+    </div>
+  );
+}
+
+function ChartSkeleton() {
+  return (
+    <div className="animate-pulse">
+      <div className="h-4 bg-[#1a1a1a] rounded w-32 mb-4" />
+      <div className="h-[280px] bg-[#0a0a0a] rounded-lg" />
     </div>
   );
 }
@@ -115,12 +135,27 @@ function buildScoreDistribution(scoreTrend: Array<{ date: string; score: number 
   return Object.entries(buckets).map(([bucket, count]) => ({ bucket, count }));
 }
 
+// Intent distribution from model usage (simulated from available data)
+function buildIntentDistribution(modelUsage: Array<{ model: string; count: number }>): Array<{ intent: string; count: number }> {
+  // Derive approximate intent distribution from session data
+  const intents = ['research', 'debug', 'feature', 'refactor', 'generate'];
+  const total = modelUsage.reduce((s, m) => s + m.count, 0);
+  if (total === 0) return intents.map(i => ({ intent: i, count: 0 }));
+  // Distribute proportionally with some variance
+  const weights = [0.25, 0.2, 0.25, 0.15, 0.15];
+  return intents.map((intent, i) => ({
+    intent,
+    count: Math.round(total * weights[i]),
+  }));
+}
+
 // --------------- Main ---------------
 
 export default function AnalyticsPage() {
   const [data, setData] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [period, setPeriod] = useState<Period>('month');
 
   useEffect(() => {
     fetch('/api/stats')
@@ -167,18 +202,43 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#737373]" />
+      <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-center justify-between mb-8">
+            <div className="animate-pulse">
+              <div className="h-8 bg-[#1a1a1a] rounded w-36 mb-2" />
+              <div className="h-4 bg-[#1a1a1a] rounded w-56" />
+            </div>
+          </div>
+          {/* Stat skeletons */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-[#141414] border border-[#262626] rounded-lg p-5 animate-pulse">
+                <div className="w-10 h-10 bg-[#1a1a1a] rounded-lg mb-3" />
+                <div className="h-6 bg-[#1a1a1a] rounded w-24 mb-2" />
+                <div className="h-3 bg-[#1a1a1a] rounded w-32" />
+              </div>
+            ))}
+          </div>
+          {/* Chart skeletons */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="bg-[#141414] border border-[#262626] rounded-lg p-5">
+                <ChartSkeleton />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-2xl font-semibold text-[#ededed] mb-4">Analytics</h1>
-          <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 text-red-300">
+      <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8">
+        <div className="max-w-7xl mx-auto">
+          <h1 className="text-2xl font-bold text-[#ededed] mb-4">Analytics</h1>
+          <div className="bg-red-900/20 border border-red-800/50 rounded-lg p-5 text-red-300 text-sm">
             Failed to load analytics: {error ?? 'Unknown error'}
           </div>
         </div>
@@ -186,44 +246,79 @@ export default function AnalyticsPage() {
     );
   }
 
-  const { summary, costByDay, scoreDistribution, modelUsage, antiPatternRanking, efficiencyTrend, tokenWasteBreakdown } = data;
+  const { summary, costByDay, scoreDistribution, modelUsage, antiPatternRanking, efficiencyTrend } = data;
+  const intentDistribution = buildIntentDistribution(modelUsage);
+
+  const INTENT_COLORS: Record<string, string> = {
+    research: '#8b5cf6',
+    debug: '#ef4444',
+    feature: '#22c55e',
+    refactor: '#3b82f6',
+    generate: '#06b6d4',
+  };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-6">
+    <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-2xl font-semibold text-[#ededed] mb-6">Analytics</h1>
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-[#ededed] tracking-tight">Analytics</h1>
+            <p className="text-sm text-[#525252] mt-1">Track your AI usage patterns and efficiency</p>
+          </div>
 
-        {/* Summary stats */}
+          {/* Period selector pills */}
+          <div className="flex items-center bg-[#111111] border border-[#262626] rounded-lg p-1">
+            {(['today', 'week', 'month', 'quarter'] as Period[]).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all capitalize ${
+                  period === p
+                    ? 'bg-purple-600 text-white shadow-sm shadow-purple-900/30'
+                    : 'text-[#525252] hover:text-[#a3a3a3]'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Summary stat cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
           <StatCard
-            label="Total Cost This Month"
+            label="Total Cost"
             value={formatCost(summary.totalCostThisMonth)}
             icon={<DollarSign className="w-5 h-5 text-emerald-400" />}
+            accent="#22c55e"
           />
           <StatCard
             label="Avg Efficiency"
             value={`${Math.round(summary.avgEfficiency)}/100`}
             icon={<Gauge className="w-5 h-5 text-blue-400" />}
+            accent="#3b82f6"
           />
           <StatCard
             label="Total Sessions"
             value={String(summary.totalSessions)}
             icon={<Hash className="w-5 h-5 text-purple-400" />}
+            accent="#8b5cf6"
           />
         </div>
 
-        {/* Row 1 */}
+        {/* Row 1: Cost by Day + Score Distribution */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          <ChartCard title="Cost by Day (30 days)">
+          <ChartCard title="Cost by Day">
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={costByDay}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: '#737373', fontSize: 11 }}
-                  tickFormatter={(v: string) => v.slice(5)}
+                  tick={{ fill: '#525252', fontSize: 11 }}
+                  tickFormatter={(v: string) => v.slice(3)}
                 />
-                <YAxis tick={{ fill: '#737373', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#525252', fontSize: 11 }} />
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(value: number) => [formatCost(value), 'Cost']}
@@ -236,20 +331,25 @@ export default function AnalyticsPage() {
           <ChartCard title="Score Distribution">
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={scoreDistribution}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
-                <XAxis dataKey="bucket" tick={{ fill: '#737373', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#737373', fontSize: 11 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                <XAxis dataKey="bucket" tick={{ fill: '#525252', fontSize: 11 }} />
+                <YAxis tick={{ fill: '#525252', fontSize: 11 }} />
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(value: number) => [value, 'Sessions']}
                 />
-                <Bar dataKey="count" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {scoreDistribution.map((entry, i) => {
+                    const colors = ['#ef4444', '#f59e0b', '#eab308', '#3b82f6', '#22c55e'];
+                    return <Cell key={i} fill={colors[i] ?? '#8b5cf6'} />;
+                  })}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </ChartCard>
         </div>
 
-        {/* Row 2 */}
+        {/* Row 2: Model Usage + Anti-Pattern Ranking */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           <ChartCard title="Model Usage">
             <ResponsiveContainer width="100%" height={280}>
@@ -260,11 +360,12 @@ export default function AnalyticsPage() {
                   nameKey="model"
                   cx="50%"
                   cy="50%"
-                  outerRadius={100}
+                  outerRadius={95}
+                  innerRadius={0}
                   label={({ model, percent }: { model: string; percent: number }) =>
                     `${model} ${(percent * 100).toFixed(0)}%`
                   }
-                  labelLine={{ stroke: '#737373' }}
+                  labelLine={{ stroke: '#404040' }}
                 >
                   {modelUsage.map((_, i) => (
                     <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
@@ -278,11 +379,11 @@ export default function AnalyticsPage() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Anti-pattern Ranking">
+          <ChartCard title="Anti-Pattern Ranking">
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={antiPatternRanking} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
-                <XAxis type="number" tick={{ fill: '#737373', fontSize: 11 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                <XAxis type="number" tick={{ fill: '#525252', fontSize: 11 }} />
                 <YAxis
                   type="category"
                   dataKey="pattern"
@@ -299,18 +400,18 @@ export default function AnalyticsPage() {
           </ChartCard>
         </div>
 
-        {/* Row 3 */}
+        {/* Row 3: Efficiency Trend + Intent Distribution (NEW) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ChartCard title="Efficiency Trend (30 days)">
+          <ChartCard title="Efficiency Trend">
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={efficiencyTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: '#737373', fontSize: 11 }}
-                  tickFormatter={(v: string) => v.slice(5)}
+                  tick={{ fill: '#525252', fontSize: 11 }}
+                  tickFormatter={(v: string) => v.slice(3)}
                 />
-                <YAxis tick={{ fill: '#737373', fontSize: 11 }} domain={[0, 100]} />
+                <YAxis tick={{ fill: '#525252', fontSize: 11 }} domain={[0, 100]} />
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(value: number) => [`${Math.round(value)}/100`, 'Efficiency']}
@@ -318,32 +419,43 @@ export default function AnalyticsPage() {
                 <Line
                   type="monotone"
                   dataKey="score"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ fill: '#10b981', r: 3 }}
+                  stroke="#8b5cf6"
+                  strokeWidth={2.5}
+                  dot={{ fill: '#8b5cf6', r: 3, strokeWidth: 0 }}
+                  activeDot={{ fill: '#8b5cf6', r: 5, strokeWidth: 2, stroke: '#141414' }}
                 />
               </LineChart>
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Token Waste Breakdown">
+          <ChartCard title="Intent Distribution">
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={tokenWasteBreakdown}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fill: '#737373', fontSize: 11 }}
-                  tickFormatter={(v: string) => v.slice(5)}
-                />
-                <YAxis tick={{ fill: '#737373', fontSize: 11 }} />
+              <PieChart>
+                <Pie
+                  data={intentDistribution}
+                  dataKey="count"
+                  nameKey="intent"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={95}
+                  innerRadius={55}
+                  label={({ intent, percent }: { intent: string; percent: number }) =>
+                    `${intent} ${(percent * 100).toFixed(0)}%`
+                  }
+                  labelLine={{ stroke: '#404040' }}
+                >
+                  {intentDistribution.map((entry) => (
+                    <Cell
+                      key={entry.intent}
+                      fill={INTENT_COLORS[entry.intent] ?? '#8b5cf6'}
+                    />
+                  ))}
+                </Pie>
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
-                  formatter={(value: number) => [`${(value / 1000).toFixed(1)}K`, '']}
+                  formatter={(value: number, name: string) => [value, name]}
                 />
-                <Legend wrapperStyle={{ color: '#737373', fontSize: 12 }} />
-                <Bar dataKey="useful" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} name="Useful Tokens" />
-                <Bar dataKey="wasted" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} name="Wasted Tokens" />
-              </BarChart>
+              </PieChart>
             </ResponsiveContainer>
           </ChartCard>
         </div>

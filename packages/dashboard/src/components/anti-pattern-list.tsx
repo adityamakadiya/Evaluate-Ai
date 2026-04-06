@@ -1,55 +1,128 @@
 'use client';
 
+import { useState } from 'react';
+import { AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+
 interface AntiPatternListProps {
   patterns: { pattern: string; count: number }[];
 }
 
-function severityColor(pattern: string): string {
+type Severity = 'high' | 'medium' | 'low';
+
+function getSeverity(pattern: string): Severity {
   const lower = pattern.toLowerCase();
-  // High severity patterns
   if (
     lower.includes('vague') ||
     lower.includes('no context') ||
     lower.includes('too broad') ||
     lower.includes('lazy')
   ) {
-    return 'bg-red-500';
+    return 'high';
   }
-  // Medium severity patterns
   if (
     lower.includes('retry') ||
     lower.includes('repeat') ||
     lower.includes('redundant') ||
     lower.includes('long')
   ) {
-    return 'bg-yellow-500';
+    return 'medium';
   }
-  // Low severity
-  return 'bg-blue-500';
+  return 'low';
+}
+
+const severityConfig: Record<Severity, { dot: string; bg: string; label: string; hint: string }> = {
+  high: {
+    dot: 'bg-red-500',
+    bg: 'bg-red-500/10',
+    label: 'High',
+    hint: 'Add specific context and constraints to your prompts. Include file names, function names, and desired output format.',
+  },
+  medium: {
+    dot: 'bg-yellow-500',
+    bg: 'bg-yellow-500/10',
+    label: 'Medium',
+    hint: 'Break complex requests into smaller steps. Review AI output before requesting changes.',
+  },
+  low: {
+    dot: 'bg-blue-500',
+    bg: 'bg-blue-500/10',
+    label: 'Low',
+    hint: 'Minor improvement opportunity. Consider structuring prompts with clear sections.',
+  },
+};
+
+interface PatternRowProps {
+  pattern: string;
+  count: number;
+  rank: number;
+}
+
+function PatternRow({ pattern, count, rank }: PatternRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const severity = getSeverity(pattern);
+  const config = severityConfig[severity];
+
+  return (
+    <li>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
+      >
+        <span className="text-xs font-medium text-[var(--text-muted)] w-4 text-right tabular-nums">
+          {rank}
+        </span>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${config.dot}`} />
+        <span className="min-w-0 flex-1 truncate text-sm text-[var(--text-primary)]">
+          {pattern}
+        </span>
+        <span
+          className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold tabular-nums ${config.bg} text-[var(--text-secondary)]`}
+        >
+          {count}
+        </span>
+        {expanded ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-[var(--text-muted)]" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-[var(--text-muted)]" />
+        )}
+      </button>
+      {expanded && (
+        <div className="ml-[52px] mr-3 mb-1 rounded-md bg-white/[0.02] border border-[var(--border-primary)] px-3 py-2 text-xs text-[var(--text-secondary)] leading-relaxed">
+          <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${config.bg} ${severity === 'high' ? 'text-red-400' : severity === 'medium' ? 'text-yellow-400' : 'text-blue-400'} mr-2 mb-1`}>
+            {config.label} severity
+          </span>
+          {config.hint}
+        </div>
+      )}
+    </li>
+  );
 }
 
 export function AntiPatternList({ patterns }: AntiPatternListProps) {
   const sorted = [...patterns].sort((a, b) => b.count - a.count);
 
   return (
-    <div className="rounded-lg border border-[#262626] bg-[#141414] p-5">
-      <h3 className="mb-4 text-sm font-medium text-[#ededed]">Top Anti-Patterns</h3>
+    <div className="card">
+      <div className="mb-4 flex items-center gap-2">
+        <AlertTriangle className="h-4 w-4 text-[var(--score-warning)]" />
+        <h3 className="text-sm font-medium text-[var(--text-primary)]">Top Issues</h3>
+      </div>
       {sorted.length === 0 ? (
-        <p className="text-sm text-[#737373]">No anti-patterns detected yet.</p>
+        <div className="flex flex-col items-center py-8 text-center">
+          <p className="text-sm text-[var(--text-muted)]">No anti-patterns detected yet.</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">
+            Great job, or just getting started!
+          </p>
+        </div>
       ) : (
-        <ul className="space-y-2.5">
-          {sorted.map((item) => (
-            <li key={item.pattern} className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${severityColor(item.pattern)}`}
-                />
-                <span className="truncate text-sm text-[#ededed]">{item.pattern}</span>
-              </div>
-              <span className="shrink-0 rounded-md bg-[#262626] px-2 py-0.5 text-xs font-medium text-[#737373]">
-                {item.count}
-              </span>
-            </li>
+        <ul className="space-y-0.5">
+          {sorted.map((item, i) => (
+            <PatternRow
+              key={item.pattern}
+              pattern={item.pattern}
+              count={item.count}
+              rank={i + 1}
+            />
           ))}
         </ul>
       )}

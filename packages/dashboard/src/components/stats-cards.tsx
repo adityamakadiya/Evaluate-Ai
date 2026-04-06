@@ -37,28 +37,42 @@ interface CardProps {
   label: string;
   value: string;
   icon: React.ReactNode;
+  iconColor: string;
   trend?: { value: string; positive: boolean } | null;
+  delay?: number;
 }
 
-function Card({ label, value, icon, trend }: CardProps) {
+function Card({ label, value, icon, iconColor, trend, delay = 0 }: CardProps) {
   return (
-    <div className="rounded-lg border border-[#262626] bg-[#141414] p-5">
+    <div
+      className="group relative rounded-xl border border-[var(--border-primary)] bg-white/[0.03] backdrop-blur-sm p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-hover)] hover:shadow-lg hover:shadow-black/20"
+      style={{ animation: `countUp 0.4s ease-out ${delay}ms both` }}
+    >
       <div className="flex items-center justify-between">
-        <span className="text-sm text-[#737373]">{label}</span>
-        <span className="text-[#737373]">{icon}</span>
+        <span className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+          {label}
+        </span>
+        <div
+          className="flex h-8 w-8 items-center justify-center rounded-lg"
+          style={{ backgroundColor: `${iconColor}15`, color: iconColor }}
+        >
+          {icon}
+        </div>
       </div>
-      <div className="mt-2 text-2xl font-semibold text-[#ededed]">{value}</div>
+      <div className="mt-3 text-[28px] font-semibold leading-none tracking-tight text-[var(--text-primary)]">
+        {value}
+      </div>
       {trend && (
-        <div className="mt-1 flex items-center gap-1 text-sm">
+        <div className="mt-2 flex items-center gap-1.5 text-xs">
           {trend.positive ? (
-            <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+            <TrendingUp className="h-3 w-3 text-emerald-400" />
           ) : (
-            <TrendingDown className="h-3.5 w-3.5 text-red-400" />
+            <TrendingDown className="h-3 w-3 text-red-400" />
           )}
-          <span className={trend.positive ? 'text-emerald-400' : 'text-red-400'}>
+          <span className={trend.positive ? 'font-medium text-emerald-400' : 'font-medium text-red-400'}>
             {trend.value}
           </span>
-          <span className="text-[#737373]">vs last week</span>
+          <span className="text-[var(--text-muted)]">vs last week</span>
         </div>
       )}
     </div>
@@ -73,48 +87,56 @@ export function StatsCards({ today, previous }: StatsCardsProps) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <Card
-        label="Cost (this week)"
+        label="Cost"
         value={formatCost(today.cost)}
         icon={<DollarSign className="h-4 w-4" />}
+        iconColor="#8b5cf6"
+        delay={0}
         trend={
           costPct !== null
             ? {
                 value: `${Math.abs(costPct).toFixed(1)}%`,
-                positive: costPct <= 0, // lower cost is good
+                positive: costPct <= 0,
               }
             : null
         }
       />
       <Card
-        label="Tokens (this week)"
+        label="Tokens"
         value={formatTokens(today.tokens)}
         icon={<Zap className="h-4 w-4" />}
+        iconColor="#3b82f6"
+        delay={50}
         trend={
           tokenPct !== null
             ? {
                 value: `${Math.abs(tokenPct).toFixed(1)}%`,
-                positive: tokenPct <= 0, // fewer tokens is good
+                positive: tokenPct <= 0,
               }
             : null
         }
       />
       <Card
-        label="Avg Score (this week)"
+        label="Avg Score"
         value={`${Math.round(today.avgScore)}/100`}
         icon={<Target className="h-4 w-4" />}
+        iconColor="#22c55e"
+        delay={100}
         trend={
           previous.avgScore > 0
             ? {
                 value: `${scoreDelta > 0 ? '+' : ''}${scoreDelta.toFixed(1)} pts`,
-                positive: scoreDelta >= 0, // higher score is good
+                positive: scoreDelta >= 0,
               }
             : null
         }
       />
       <Card
-        label="Sessions (this week)"
+        label="Sessions"
         value={String(today.sessions)}
         icon={<Activity className="h-4 w-4" />}
+        iconColor="#f97316"
+        delay={150}
       />
     </div>
   );

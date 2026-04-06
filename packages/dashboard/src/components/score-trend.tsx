@@ -20,49 +20,87 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function scoreColorForValue(score: number): string {
+  if (score >= 80) return '#22c55e';
+  if (score >= 60) return '#3b82f6';
+  if (score >= 40) return '#eab308';
+  return '#ef4444';
+}
+
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
+  const score = Math.round(payload[0].value);
+  const color = scoreColorForValue(score);
   return (
-    <div className="rounded-lg border border-[#262626] bg-[#1a1a1a] px-3 py-2 text-sm shadow-lg">
-      <p className="text-[#737373]">{formatDate(label)}</p>
-      <p className="font-medium text-[#ededed]">{Math.round(payload[0].value)}/100</p>
+    <div className="rounded-lg border border-[var(--border-primary)] bg-[var(--bg-elevated)] px-3 py-2 text-sm shadow-xl shadow-black/30">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
+        {formatDate(label)}
+      </p>
+      <p className="mt-0.5 text-base font-semibold" style={{ color }}>
+        {score}/100
+      </p>
     </div>
   );
 }
 
 export function ScoreTrend({ data }: ScoreTrendProps) {
+  if (data.length === 0) {
+    return (
+      <div className="card">
+        <h3 className="mb-4 text-sm font-medium text-[var(--text-primary)]">Score Trend</h3>
+        <p className="text-sm text-[var(--text-muted)]">No score data yet.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-lg border border-[#262626] bg-[#141414] p-5">
-      <h3 className="mb-4 text-sm font-medium text-[#ededed]">Avg Score Trend (30 days)</h3>
+    <div className="card">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-[var(--text-primary)]">Score Trend</h3>
+          <p className="mt-0.5 text-xs text-[var(--text-muted)]">Last 30 days</p>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-[var(--text-muted)]">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-[#22c55e]" />
+            Score
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-[1px] w-3 border-t border-dashed border-[var(--text-muted)]" />
+            Good (70)
+          </span>
+        </div>
+      </div>
       <ResponsiveContainer width="100%" height={260}>
         <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="var(--border-primary)"
+            horizontal={true}
+            vertical={false}
+          />
           <XAxis
             dataKey="date"
             tickFormatter={formatDate}
-            stroke="#737373"
+            stroke="var(--text-muted)"
             tick={{ fontSize: 11 }}
-            axisLine={{ stroke: '#262626' }}
+            axisLine={false}
             tickLine={false}
           />
           <YAxis
             domain={[0, 100]}
-            stroke="#737373"
+            stroke="var(--text-muted)"
             tick={{ fontSize: 11 }}
-            axisLine={{ stroke: '#262626' }}
+            axisLine={false}
             tickLine={false}
+            width={30}
           />
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--border-hover)', strokeDasharray: '4 4' }} />
           <ReferenceLine
             y={70}
-            stroke="#737373"
-            strokeDasharray="4 4"
-            label={{
-              value: 'Good',
-              position: 'right',
-              fill: '#737373',
-              fontSize: 11,
-            }}
+            stroke="var(--text-muted)"
+            strokeDasharray="6 4"
+            strokeOpacity={0.5}
           />
           <Line
             type="monotone"
@@ -70,7 +108,12 @@ export function ScoreTrend({ data }: ScoreTrendProps) {
             stroke="#22c55e"
             strokeWidth={2}
             dot={false}
-            activeDot={{ r: 4, fill: '#22c55e' }}
+            activeDot={{
+              r: 4,
+              fill: '#22c55e',
+              stroke: 'var(--bg-card)',
+              strokeWidth: 2,
+            }}
           />
         </LineChart>
       </ResponsiveContainer>

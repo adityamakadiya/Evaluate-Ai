@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -25,6 +25,7 @@ import {
   Brain,
   Crosshair,
   Layers,
+  Tag,
 } from 'lucide-react';
 import {
   BarChart,
@@ -116,13 +117,22 @@ interface TurnDetailResponse {
 // --------------- Helpers ---------------
 
 function scoreColor(score: number): string {
-  if (score >= 70) return '#34d399';
-  if (score >= 40) return '#facc15';
-  return '#f87171';
+  if (score >= 80) return '#22c55e';
+  if (score >= 60) return '#3b82f6';
+  if (score >= 40) return '#eab308';
+  return '#ef4444';
+}
+
+function scoreGradient(score: number): [string, string] {
+  if (score >= 80) return ['#8b5cf6', '#22c55e'];
+  if (score >= 60) return ['#8b5cf6', '#3b82f6'];
+  if (score >= 40) return ['#8b5cf6', '#eab308'];
+  return ['#8b5cf6', '#ef4444'];
 }
 
 function scoreLabel(score: number): string {
-  if (score >= 70) return 'Good';
+  if (score >= 80) return 'Excellent';
+  if (score >= 60) return 'Good';
   if (score >= 40) return 'Needs Work';
   return 'Poor';
 }
@@ -174,48 +184,74 @@ function normalizeAntiPattern(ap: string | { id: string; severity: string; hint:
   return { id: ap.id, severity: ap.severity, hint: ap.hint };
 }
 
-// --------------- Circular Progress Ring ---------------
+// --------------- Animated Score Ring ---------------
 
-function ScoreRing({ score, size = 120 }: { score: number; size?: number }) {
-  const strokeWidth = 8;
+function ScoreRing({ score, size = 140 }: { score: number; size?: number }) {
+  const [animatedOffset, setAnimatedOffset] = useState<number | null>(null);
+  const strokeWidth = 10;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const progress = (score / 100) * circumference;
-  const color = scoreColor(score);
+  const [gradStart, gradEnd] = scoreGradient(score);
+  const gradId = `scoreRingGrad-${score}-${size}`;
+
+  useEffect(() => {
+    // Start with full offset (empty ring), then animate to target
+    setAnimatedOffset(circumference);
+    const timer = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setAnimatedOffset(circumference - progress);
+      });
+    });
+    return () => cancelAnimationFrame(timer);
+  }, [circumference, progress]);
 
   return (
     <div className="relative" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="transform -rotate-90">
+      {/* Purple glow behind ring */}
+      <div
+        className="absolute inset-0 rounded-full"
+        style={{
+          background: `radial-gradient(circle, rgba(139, 92, 246, 0.15) 0%, transparent 70%)`,
+          filter: 'blur(20px)',
+          transform: 'scale(1.3)',
+        }}
+      />
+      <svg width={size} height={size} className="relative transform -rotate-90">
         <defs>
-          <linearGradient id={`scoreGrad-${score}`} x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor={color} stopOpacity="0.8" />
-            <stop offset="100%" stopColor={color} stopOpacity="1" />
+          <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={gradStart} />
+            <stop offset="100%" stopColor={gradEnd} />
           </linearGradient>
         </defs>
+        {/* Track */}
         <circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#262626"
+          stroke="#1a1a1a"
           strokeWidth={strokeWidth}
         />
+        {/* Animated progress stroke */}
         <circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke={`url(#scoreGrad-${score})`}
+          stroke={`url(#${gradId})`}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={circumference}
-          strokeDashoffset={circumference - progress}
-          className="transition-all duration-1000 ease-out"
+          strokeDashoffset={animatedOffset ?? circumference}
+          style={{
+            transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1)',
+          }}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-3xl font-bold text-[#ededed]">{score}</span>
-        <span className="text-xs text-[#737373]">/ 100</span>
+        <span className="text-4xl font-bold text-[#ededed]">{score}</span>
+        <span className="text-[11px] text-[#737373] font-medium mt-0.5">/ 100</span>
       </div>
     </div>
   );
@@ -228,16 +264,16 @@ function DimensionBar({ label, value, max, icon }: { label: string; value: numbe
   const barColor = value >= max * 0.7 ? 'bg-emerald-500' : value >= max * 0.4 ? 'bg-yellow-500' : 'bg-red-500';
 
   return (
-    <div className="mb-3">
-      <div className="flex items-center justify-between mb-1">
+    <div className="mb-3.5 last:mb-0">
+      <div className="flex items-center justify-between mb-1.5">
         <span className="text-xs text-[#a3a3a3] flex items-center gap-1.5">
           {icon} {label}
         </span>
-        <span className="text-xs font-medium text-[#ededed]">{value}/{max}</span>
+        <span className="text-xs font-semibold text-[#ededed]">{value}/{max}</span>
       </div>
       <div className="h-2 bg-[#1a1a1a] rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all duration-700 ease-out ${barColor}`}
+          className={`h-full rounded-full transition-all duration-1000 ease-out ${barColor}`}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -260,11 +296,11 @@ function TokenBar({ usage, costUsd }: { usage: ResponseData['usage']; costUsd: n
   return (
     <div className="space-y-3">
       {/* Visual bar */}
-      <div className="h-4 bg-[#1a1a1a] rounded-full overflow-hidden flex">
+      <div className="h-3.5 bg-[#1a1a1a] rounded-full overflow-hidden flex">
         {segments.map((seg) => (
           <div
             key={seg.label}
-            className="h-full transition-all duration-500"
+            className="h-full transition-all duration-700 first:rounded-l-full last:rounded-r-full"
             style={{
               width: `${(seg.tokens / total) * 100}%`,
               backgroundColor: seg.color,
@@ -297,34 +333,44 @@ function TokenBar({ usage, costUsd }: { usage: ResponseData['usage']; costUsd: n
 
 function IssueCard({ issue }: { issue: IssueItem }) {
   const [expanded, setExpanded] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   return (
     <div
-      className="bg-[#1a1a1a] border border-red-900/30 rounded-lg overflow-hidden hover:border-red-800/50 transition-colors cursor-pointer"
+      className="bg-[#0a0a0a] border border-red-900/30 rounded-lg overflow-hidden hover:border-red-800/50 transition-all duration-200 cursor-pointer group"
       onClick={() => setExpanded(!expanded)}
     >
-      <div className="flex items-center justify-between p-3">
+      <div className="flex items-center justify-between p-3.5">
         <div className="flex items-center gap-2.5">
-          <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${severityDot(issue.severity)}`} />
           <span className="text-sm font-medium text-[#ededed]">{issue.label}</span>
           <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${severityColor(issue.severity)}`}>
             {issue.severity}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-red-400 font-medium">{issue.impact}</span>
-          {expanded ? (
-            <ChevronDown className="w-3.5 h-3.5 text-[#737373]" />
-          ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-[#737373]" />
-          )}
+        <div className="flex items-center gap-2.5">
+          <span className="text-xs text-red-400 font-semibold bg-red-900/20 px-2 py-0.5 rounded-full">{issue.impact}</span>
+          <div className="text-[#525252] group-hover:text-[#737373] transition-colors">
+            {expanded ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronRight className="w-4 h-4" />
+            )}
+          </div>
         </div>
       </div>
-      {expanded && (
-        <div className="px-3 pb-3 border-t border-red-900/20">
-          <p className="text-sm text-[#a3a3a3] mt-2 leading-relaxed">{issue.hint}</p>
+      <div
+        ref={contentRef}
+        className="overflow-hidden transition-all duration-300 ease-in-out"
+        style={{
+          maxHeight: expanded ? contentRef.current?.scrollHeight ?? 200 : 0,
+          opacity: expanded ? 1 : 0,
+        }}
+      >
+        <div className="px-3.5 pb-3.5 border-t border-red-900/20">
+          <p className="text-sm text-[#a3a3a3] mt-2.5 leading-relaxed">{issue.hint}</p>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -333,27 +379,83 @@ function IssueCard({ issue }: { issue: IssueItem }) {
 
 function LoadingSkeleton() {
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-6 animate-pulse">
-      <div className="max-w-7xl mx-auto">
-        <div className="h-4 bg-[#1a1a1a] rounded w-24 mb-6" />
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <div className="h-8 bg-[#1a1a1a] rounded w-48 mb-3" />
-            <div className="h-5 bg-[#1a1a1a] rounded w-96 mb-2" />
-            <div className="h-4 bg-[#1a1a1a] rounded w-64" />
-          </div>
-          <div className="w-[120px] h-[120px] bg-[#1a1a1a] rounded-full" />
-        </div>
-        <div className="flex gap-6">
+    <div className="min-h-screen bg-[#0a0a0a] p-6">
+      <div className="max-w-7xl mx-auto animate-pulse">
+        <div className="h-4 bg-[#1a1a1a] rounded w-24 mb-8" />
+        {/* Hero skeleton */}
+        <div className="flex items-start justify-between mb-10">
           <div className="flex-1 space-y-4">
-            <div className="h-64 bg-[#141414] border border-[#262626] rounded-lg" />
+            <div className="h-8 bg-[#1a1a1a] rounded w-48" />
+            <div className="h-20 bg-[#111] border border-[#1a1a1a] rounded-lg w-full max-w-xl" />
+            <div className="flex gap-3">
+              <div className="h-7 bg-[#1a1a1a] rounded-full w-24" />
+              <div className="h-7 bg-[#1a1a1a] rounded-full w-28" />
+              <div className="h-7 bg-[#1a1a1a] rounded-full w-20" />
+            </div>
+          </div>
+          <div className="w-[140px] h-[140px] bg-[#1a1a1a] rounded-full ml-8" />
+        </div>
+        {/* Two column skeleton */}
+        <div className="flex gap-6">
+          <div className="flex-1 space-y-0">
+            <div className="flex gap-1 mb-0">
+              <div className="h-10 bg-[#141414] rounded-t-lg w-28" />
+              <div className="h-10 bg-[#111] rounded-t-lg w-28" />
+              <div className="h-10 bg-[#111] rounded-t-lg w-28" />
+            </div>
+            <div className="h-[450px] bg-[#141414] border border-[#262626] rounded-b-lg" />
           </div>
           <div className="w-[45%] space-y-4">
-            <div className="h-48 bg-[#141414] border border-[#262626] rounded-lg" />
+            <div className="h-6 bg-[#1a1a1a] rounded w-48" />
+            <div className="h-52 bg-[#141414] border border-[#262626] rounded-lg" />
+            <div className="h-40 bg-[#141414] border border-[#262626] rounded-lg" />
             <div className="h-48 bg-[#141414] border border-[#262626] rounded-lg" />
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// --------------- Tab Underline Indicator ---------------
+
+function TabBar({
+  activeTab,
+  setActiveTab,
+}: {
+  activeTab: 'prompt' | 'response' | 'tokens';
+  setActiveTab: (t: 'prompt' | 'response' | 'tokens') => void;
+}) {
+  const tabs = [
+    { key: 'prompt' as const, label: 'Your Prompt' },
+    { key: 'response' as const, label: 'AI Response' },
+    { key: 'tokens' as const, label: 'Token Breakdown' },
+  ];
+  const activeIndex = tabs.findIndex((t) => t.key === activeTab);
+
+  return (
+    <div className="relative flex border-b border-[#262626]">
+      {tabs.map((tab) => (
+        <button
+          key={tab.key}
+          onClick={() => setActiveTab(tab.key)}
+          className={`relative px-5 py-3.5 text-sm font-medium transition-colors z-10 ${
+            activeTab === tab.key
+              ? 'text-[#ededed]'
+              : 'text-[#525252] hover:text-[#a3a3a3]'
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+      {/* Sliding purple underline */}
+      <div
+        className="absolute bottom-0 h-[2px] bg-purple-500 transition-all duration-300 ease-out rounded-full"
+        style={{
+          width: `${100 / tabs.length}%`,
+          transform: `translateX(${activeIndex * 100}%)`,
+        }}
+      />
     </div>
   );
 }
@@ -428,11 +530,11 @@ export default function TurnDetailPage() {
         <div className="max-w-7xl mx-auto">
           <button
             onClick={() => router.push(`/sessions/${sessionId}`)}
-            className="inline-flex items-center gap-1 text-sm text-[#737373] hover:text-[#ededed] mb-4 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-[#525252] hover:text-[#ededed] mb-6 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" /> Back to Session
           </button>
-          <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 text-red-300">
+          <div className="bg-red-900/20 border border-red-800/50 rounded-lg p-5 text-red-300 text-sm">
             {error ?? 'Turn not found'}
           </div>
         </div>
@@ -484,97 +586,95 @@ export default function TurnDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-4 md:p-6">
+    <div className="min-h-screen bg-[#0a0a0a] p-4 md:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
-        {/* =========== Section 1: Header + Score Hero =========== */}
+        {/* =========== Back Navigation =========== */}
         <button
           onClick={() => router.push(`/sessions/${sessionId}`)}
-          className="inline-flex items-center gap-1 text-sm text-[#737373] hover:text-[#ededed] mb-6 transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-[#525252] hover:text-[#ededed] mb-8 transition-colors group"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to Session
+          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" /> Back to Session
         </button>
 
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 mb-8">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-2xl font-semibold text-[#ededed]">
+        {/* =========== Hero Section =========== */}
+        <div className="flex flex-col md:flex-row items-start justify-between gap-8 mb-10">
+          {/* Left: Turn info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3 mb-4">
+              <h1 className="text-3xl font-bold text-[#ededed] tracking-tight">
                 Turn {turn.turnNumber}
               </h1>
-              <span className="text-sm text-[#737373]">of {session.totalTurns}</span>
+              <span className="text-sm text-[#525252] font-medium">of {session.totalTurns}</span>
               {turn.wasRetry && (
-                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-orange-900/40 text-orange-400 border border-orange-800/50">
+                <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-orange-900/40 text-orange-400 border border-orange-800/50 uppercase tracking-wider">
                   Retry
                 </span>
               )}
             </div>
-            <p className="text-lg text-[#ededed]/80 mb-3 max-w-2xl leading-relaxed">
-              &ldquo;{turn.promptText ? (turn.promptText.length > 120 ? turn.promptText.slice(0, 120) + '...' : turn.promptText) : 'No prompt text'}&rdquo;
-            </p>
-            <div className="flex items-center gap-3 text-sm text-[#737373] flex-wrap">
-              <span className="flex items-center gap-1">
-                <Terminal className="w-3.5 h-3.5" />
-                {session.model ?? 'Unknown model'}
-              </span>
-              <span className="text-[#333]">|</span>
-              <span className="flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
+
+            {/* Prompt quote block */}
+            <div className="relative pl-4 mb-5 border-l-2 border-purple-500/40">
+              <p className="text-base text-[#a3a3a3] leading-relaxed italic">
+                &ldquo;{turn.promptText ? (turn.promptText.length > 160 ? turn.promptText.slice(0, 160) + '...' : turn.promptText) : 'No prompt text'}&rdquo;
+              </p>
+            </div>
+
+            {/* Metadata pills */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {session.model && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-[#141414] border border-[#262626] text-[#a3a3a3]">
+                  <Terminal className="w-3 h-3" />
+                  {session.model}
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-[#141414] border border-[#262626] text-[#a3a3a3]">
+                <Clock className="w-3 h-3" />
                 {timeAgo(turn.createdAt)}
               </span>
-              {response && (
-                <>
-                  <span className="text-[#333]">|</span>
-                  <span className="flex items-center gap-1">
-                    <Coins className="w-3.5 h-3.5" />
-                    {formatCost(response.costUsd)}
-                  </span>
-                </>
-              )}
               {turn.latencyMs !== null && (
-                <>
-                  <span className="text-[#333]">|</span>
-                  <span>{turn.latencyMs < 1000 ? `${turn.latencyMs}ms` : `${(turn.latencyMs / 1000).toFixed(1)}s`}</span>
-                </>
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-[#141414] border border-[#262626] text-[#a3a3a3]">
+                  <Zap className="w-3 h-3" />
+                  {turn.latencyMs < 1000 ? `${turn.latencyMs}ms` : `${(turn.latencyMs / 1000).toFixed(1)}s`}
+                </span>
+              )}
+              {response && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-[#141414] border border-[#262626] text-[#a3a3a3]">
+                  <Coins className="w-3 h-3" />
+                  {formatCost(response.costUsd)}
+                </span>
+              )}
+              {antiPatterns.length > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-purple-900/30 border border-purple-800/40 text-purple-400">
+                  <Tag className="w-3 h-3" />
+                  {antiPatterns.length} issue{antiPatterns.length !== 1 ? 's' : ''}
+                </span>
               )}
             </div>
           </div>
 
-          <div className="flex-shrink-0">
-            <ScoreRing score={Math.round(score)} size={120} />
-            <p className="text-center text-xs mt-2 font-medium" style={{ color: scoreColor(score) }}>
+          {/* Right: Score Ring */}
+          <div className="flex-shrink-0 flex flex-col items-center">
+            <ScoreRing score={Math.round(score)} size={140} />
+            <p
+              className="text-center text-sm mt-3 font-semibold tracking-wide uppercase"
+              style={{ color: scoreColor(score) }}
+            >
               {scoreLabel(score)}
             </p>
           </div>
         </div>
 
-        {/* =========== Section 2: Two-column layout =========== */}
-        <div className="flex flex-col lg:flex-row gap-6 mb-8">
-          {/* LEFT COLUMN — Prompt vs Response */}
-          <div className="flex-1 lg:w-[55%]">
-            {/* Tabs */}
-            <div className="flex border-b border-[#262626] mb-0">
-              {(['prompt', 'response', 'tokens'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                    activeTab === tab
-                      ? 'text-[#ededed] border-blue-500'
-                      : 'text-[#737373] border-transparent hover:text-[#a3a3a3] hover:border-[#404040]'
-                  }`}
-                >
-                  {tab === 'prompt' && 'Your Prompt'}
-                  {tab === 'response' && 'AI Response'}
-                  {tab === 'tokens' && 'Token Breakdown'}
-                </button>
-              ))}
-            </div>
+        {/* =========== Two-Column Layout =========== */}
+        <div className="flex flex-col lg:flex-row gap-6 mb-10">
+          {/* LEFT COLUMN: Tabbed Content (55%) */}
+          <div className="flex-1 lg:w-[55%] min-w-0">
+            <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-            {/* Tab Content */}
-            <div className="bg-[#141414] border border-[#262626] border-t-0 rounded-b-lg p-5 min-h-[400px]">
+            <div className="bg-[#141414] border border-[#262626] border-t-0 rounded-b-lg p-5 min-h-[420px]">
               {/* --- Prompt Tab --- */}
               {activeTab === 'prompt' && (
                 <div>
-                  <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-4 mb-4">
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-5 mb-5">
                     <pre className="text-sm text-[#ededed]/90 whitespace-pre-wrap break-words font-mono leading-relaxed">
                       {turn.promptText || 'No prompt text available'}
                     </pre>
@@ -583,12 +683,12 @@ export default function TurnDetailPage() {
                   {/* Anti-pattern tags */}
                   {antiPatterns.length > 0 && (
                     <div>
-                      <p className="text-xs text-[#737373] mb-2 uppercase tracking-wider">Issues Detected</p>
+                      <p className="text-[11px] text-[#525252] mb-2.5 uppercase tracking-widest font-semibold">Issues Detected</p>
                       <div className="flex flex-wrap gap-2">
                         {antiPatterns.map((ap, i) => (
                           <span
                             key={i}
-                            className={`text-xs font-medium px-2.5 py-1 rounded-full border cursor-default ${severityColor(ap.severity)}`}
+                            className={`text-xs font-medium px-2.5 py-1.5 rounded-full border cursor-pointer hover:brightness-125 transition-all ${severityColor(ap.severity)}`}
                             title={ap.hint}
                           >
                             <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${severityDot(ap.severity)}`} />
@@ -602,17 +702,17 @@ export default function TurnDetailPage() {
                   {antiPatterns.length === 0 && (
                     <div className="flex items-center gap-2 text-emerald-400">
                       <CheckCircle2 className="w-4 h-4" />
-                      <span className="text-sm">No anti-patterns detected</span>
+                      <span className="text-sm font-medium">No anti-patterns detected</span>
                     </div>
                   )}
 
                   {/* Prompt metadata */}
-                  <div className="mt-4 pt-4 border-t border-[#262626] flex gap-4 text-xs text-[#737373]">
+                  <div className="mt-5 pt-4 border-t border-[#1a1a1a] flex gap-4 text-xs text-[#525252]">
                     {turn.promptTokensEst !== null && (
                       <span>~{formatTokens(turn.promptTokensEst)} tokens</span>
                     )}
                     {turn.contextUsedPct !== null && (
-                      <span>Context: {Math.round(turn.contextUsedPct)}%</span>
+                      <span>Context window: {Math.round(turn.contextUsedPct)}%</span>
                     )}
                   </div>
                 </div>
@@ -623,43 +723,46 @@ export default function TurnDetailPage() {
                 <div>
                   {response ? (
                     <>
-                      <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-4 mb-4 max-h-[500px] overflow-y-auto">
+                      <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-5 mb-5 max-h-[500px] overflow-y-auto scrollbar-thin">
                         <pre className="text-sm text-[#ededed]/90 whitespace-pre-wrap break-words leading-relaxed">
                           {response.text || 'Empty response'}
                         </pre>
                       </div>
 
-                      {/* Tool calls */}
+                      {/* Tool calls as styled cards */}
                       {response.toolCalls.length > 0 && (
-                        <div className="mb-4">
-                          <p className="text-xs text-[#737373] mb-2 uppercase tracking-wider">Tool Calls</p>
-                          <div className="flex flex-wrap gap-2">
+                        <div className="mb-5">
+                          <p className="text-[11px] text-[#525252] mb-2.5 uppercase tracking-widest font-semibold">Tool Calls</p>
+                          <div className="grid grid-cols-2 gap-2">
                             {response.toolCalls.map((tc, i) => (
-                              <span key={i} className="text-xs bg-[#1a1a1a] border border-[#262626] text-[#a3a3a3] px-2.5 py-1 rounded-md flex items-center gap-1.5">
-                                <FileCode className="w-3 h-3" />
-                                {tc}
-                              </span>
+                              <div key={i} className="flex items-center gap-2.5 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3.5 py-2.5 hover:border-[#262626] transition-colors">
+                                <div className="w-7 h-7 rounded-md bg-[#1a1a1a] flex items-center justify-center flex-shrink-0">
+                                  <FileCode className="w-3.5 h-3.5 text-purple-400" />
+                                </div>
+                                <span className="text-xs text-[#a3a3a3] font-medium truncate">{tc}</span>
+                              </div>
                             ))}
                           </div>
                         </div>
                       )}
 
-                      {/* Token usage mini bar */}
+                      {/* Token usage bar */}
                       <TokenBar usage={response.usage} costUsd={response.costUsd} />
                     </>
                   ) : (
-                    <div className="flex flex-col items-center justify-center py-16 text-center">
-                      <div className="relative mb-3">
-                        <Brain className="w-10 h-10 text-blue-400 animate-pulse" />
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <div className="relative mb-4">
+                        <Brain className="w-12 h-12 text-purple-400 animate-pulse" />
+                        <div className="absolute inset-0 rounded-full bg-purple-500/10 animate-ping" style={{ animationDuration: '2s' }} />
                       </div>
-                      <p className="text-sm text-[#ededed] mb-1">AI is generating response...</p>
-                      <p className="text-xs text-[#525252]">
-                        Response will appear here automatically once complete
+                      <p className="text-sm text-[#ededed] font-medium mb-1.5">AI is generating...</p>
+                      <p className="text-xs text-[#404040] mb-4">
+                        Response will appear here automatically
                       </p>
-                      <div className="flex gap-1 mt-3">
-                        <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <div className="flex gap-1.5">
+                        <span className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                       </div>
                     </div>
                   )}
@@ -671,11 +774,9 @@ export default function TurnDetailPage() {
                 <div>
                   {response ? (
                     <div className="space-y-6">
-                      <TokenBar usage={response.usage} costUsd={response.costUsd} />
-
-                      {/* Detailed chart */}
+                      {/* Stacked horizontal bar chart */}
                       <div>
-                        <p className="text-xs text-[#737373] mb-3 uppercase tracking-wider">Token Distribution</p>
+                        <p className="text-[11px] text-[#525252] mb-3 uppercase tracking-widest font-semibold">Token Distribution</p>
                         <ResponsiveContainer width="100%" height={200}>
                           <BarChart
                             data={[
@@ -686,8 +787,8 @@ export default function TurnDetailPage() {
                             ].filter(d => d.tokens > 0)}
                             layout="vertical"
                           >
-                            <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
-                            <XAxis type="number" tick={{ fill: '#737373', fontSize: 11 }} />
+                            <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                            <XAxis type="number" tick={{ fill: '#525252', fontSize: 11 }} />
                             <YAxis dataKey="name" type="category" tick={{ fill: '#737373', fontSize: 11 }} width={90} />
                             <Tooltip
                               contentStyle={{
@@ -713,26 +814,29 @@ export default function TurnDetailPage() {
                         </ResponsiveContainer>
                       </div>
 
-                      {/* Cost breakdown */}
-                      <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-4">
-                        <p className="text-xs text-[#737373] mb-2 uppercase tracking-wider">Cost Summary</p>
-                        <div className="grid grid-cols-2 gap-3">
+                      {/* Token bar legend */}
+                      <TokenBar usage={response.usage} costUsd={response.costUsd} />
+
+                      {/* Cost summary */}
+                      <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-4">
+                        <p className="text-[11px] text-[#525252] mb-3 uppercase tracking-widest font-semibold">Cost Summary</p>
+                        <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <p className="text-xs text-[#525252]">Model</p>
-                            <p className="text-sm text-[#ededed] font-medium">{response.usage.model}</p>
+                            <p className="text-xs text-[#404040] mb-0.5">Model</p>
+                            <p className="text-sm text-[#ededed] font-semibold">{response.usage.model}</p>
                           </div>
                           <div>
-                            <p className="text-xs text-[#525252]">Turn Cost</p>
-                            <p className="text-sm text-[#ededed] font-medium">{formatCost(response.costUsd)}</p>
+                            <p className="text-xs text-[#404040] mb-0.5">Turn Cost</p>
+                            <p className="text-sm text-[#ededed] font-semibold">{formatCost(response.costUsd)}</p>
                           </div>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center py-16 text-center">
-                      <Layers className="w-10 h-10 text-blue-400 animate-pulse mb-3" />
-                      <p className="text-sm text-[#ededed]">Waiting for response to complete...</p>
-                      <p className="text-xs text-[#525252]">Token breakdown will appear after AI finishes responding</p>
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <Layers className="w-12 h-12 text-purple-400 animate-pulse mb-4" />
+                      <p className="text-sm text-[#ededed] font-medium">Waiting for response...</p>
+                      <p className="text-xs text-[#404040] mt-1">Token breakdown appears after AI finishes</p>
                     </div>
                   )}
                 </div>
@@ -740,18 +844,18 @@ export default function TurnDetailPage() {
             </div>
           </div>
 
-          {/* RIGHT COLUMN — How to Improve */}
-          <div className="lg:w-[45%] space-y-4">
-            <h2 className="text-lg font-medium text-[#ededed] flex items-center gap-2">
+          {/* RIGHT COLUMN: Improvement Coach (45%) */}
+          <div className="lg:w-[45%] space-y-5">
+            <h2 className="text-lg font-semibold text-[#ededed] flex items-center gap-2.5">
               <Sparkles className="w-5 h-5 text-purple-400" />
-              How to Improve This Prompt
+              How to Improve
             </h2>
 
             {/* Score Breakdown Card */}
             {breakdownData && (
               <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-colors">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm font-medium text-[#ededed]">Score Breakdown</p>
+                <div className="flex items-center justify-between mb-5">
+                  <p className="text-sm font-semibold text-[#ededed] uppercase tracking-wider">Score Breakdown</p>
                   <span className="text-2xl font-bold" style={{ color: scoreColor(score) }}>
                     {Math.round(score)}
                   </span>
@@ -766,10 +870,12 @@ export default function TurnDetailPage() {
             {/* Issues Found Card */}
             {improvement.issues.length > 0 && (
               <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-colors">
-                <div className="flex items-center gap-2 mb-3">
-                  <AlertTriangle className="w-4 h-4 text-red-400" />
-                  <p className="text-sm font-medium text-[#ededed]">Issues Found</p>
-                  <span className="text-xs bg-red-900/30 text-red-400 px-2 py-0.5 rounded-full">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="w-6 h-6 rounded-md bg-red-900/30 flex items-center justify-center">
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+                  </div>
+                  <p className="text-sm font-semibold text-[#ededed]">Issues Found</p>
+                  <span className="text-[11px] font-bold bg-red-900/40 text-red-400 px-2 py-0.5 rounded-full ml-auto">
                     {improvement.issues.length}
                   </span>
                 </div>
@@ -784,94 +890,97 @@ export default function TurnDetailPage() {
             {/* Missing Signals Card */}
             {improvement.missingSignals.length > 0 && (
               <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-colors">
-                <div className="flex items-center gap-2 mb-3">
-                  <Plus className="w-4 h-4 text-emerald-400" />
-                  <p className="text-sm font-medium text-[#ededed]">Missing Signals</p>
-                  <span className="text-xs bg-emerald-900/30 text-emerald-400 px-2 py-0.5 rounded-full">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="w-6 h-6 rounded-md bg-emerald-900/30 flex items-center justify-center">
+                    <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  </div>
+                  <p className="text-sm font-semibold text-[#ededed]">Missing Signals</p>
+                  <span className="text-[11px] font-bold bg-emerald-900/40 text-emerald-400 px-2 py-0.5 rounded-full ml-auto">
                     +{improvement.missingSignals.reduce((sum, ms) => {
                       const pts = parseInt(ms.impact.replace(/[^0-9]/g, ''), 10);
                       return sum + (isNaN(pts) ? 0 : pts);
-                    }, 0)} pts possible
+                    }, 0)} pts
                   </span>
                 </div>
                 <div className="space-y-2">
                   {improvement.missingSignals.map((signal) => (
                     <div
                       key={signal.id}
-                      className="bg-[#1a1a1a] border border-emerald-900/20 rounded-lg p-3 flex items-start justify-between gap-3 hover:border-emerald-800/40 transition-colors"
+                      className="bg-[#0a0a0a] border border-emerald-900/20 rounded-lg p-3.5 flex items-start justify-between gap-3 hover:border-emerald-800/40 transition-colors"
                     >
                       <div className="flex items-start gap-2.5">
-                        <Plus className="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0" />
+                        <div className="w-5 h-5 rounded-full bg-emerald-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Plus className="w-3 h-3 text-emerald-400" />
+                        </div>
                         <div>
                           <p className="text-sm font-medium text-[#ededed]">{signal.label}</p>
-                          <p className="text-xs text-[#737373] mt-0.5">{signal.hint}</p>
+                          <p className="text-xs text-[#525252] mt-1 leading-relaxed">{signal.hint}</p>
                         </div>
                       </div>
-                      <span className="text-xs text-emerald-400 font-medium whitespace-nowrap">{signal.impact}</span>
+                      <span className="text-xs text-emerald-400 font-bold whitespace-nowrap bg-emerald-900/20 px-2 py-0.5 rounded-full">{signal.impact}</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Suggested Rewrite Card */}
-            <div className="relative bg-[#141414] rounded-lg p-5 overflow-hidden hover:shadow-lg hover:shadow-blue-900/5 transition-all"
-              style={{
-                border: '1px solid transparent',
-                backgroundClip: 'padding-box',
-                backgroundImage: 'linear-gradient(#141414, #141414), linear-gradient(135deg, #3b82f6, #8b5cf6, #3b82f6)',
-                backgroundOrigin: 'border-box',
-              }}
-            >
-              {/* Gradient border effect via box shadow */}
-              <div className="absolute inset-0 rounded-lg" style={{
-                background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1))',
-                pointerEvents: 'none',
-              }} />
+            {/* Suggested Rewrite Card (HERO ELEMENT) */}
+            <div className="bg-gradient-to-r from-purple-500 to-blue-500 p-[1px] rounded-lg">
+              <div
+                className="bg-[#141414] rounded-lg p-5 relative overflow-hidden"
+                style={{
+                  boxShadow: '0 0 30px rgba(139, 92, 246, 0.12), 0 0 60px rgba(139, 92, 246, 0.06)',
+                }}
+              >
+                {/* Subtle gradient overlay */}
+                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/[0.03] to-blue-500/[0.03] pointer-events-none" />
 
-              <div className="relative">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-blue-400" />
-                    <p className="text-sm font-medium text-[#ededed]">Improved Version</p>
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-purple-400" />
+                      <p className="text-sm font-semibold text-[#ededed]">Suggested Rewrite</p>
+                    </div>
+                    <button
+                      onClick={() => handleCopy(improvement.rewriteExample)}
+                      className="flex items-center gap-1.5 text-xs text-[#525252] hover:text-[#ededed] transition-colors px-2.5 py-1.5 rounded-md hover:bg-[#1a1a1a] border border-transparent hover:border-[#262626]"
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleCopy(improvement.rewriteExample)}
-                    className="flex items-center gap-1 text-xs text-[#737373] hover:text-[#ededed] transition-colors px-2 py-1 rounded-md hover:bg-[#262626]"
-                  >
-                    {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                    {copied ? 'Copied!' : 'Copy'}
-                  </button>
-                </div>
 
-                <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-4 mb-3">
-                  <pre className="text-sm text-[#ededed]/90 whitespace-pre-wrap break-words font-mono leading-relaxed">
-                    {improvement.rewriteExample}
-                  </pre>
-                </div>
+                  <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-4 mb-4">
+                    <pre className="text-sm text-[#ededed]/90 whitespace-pre-wrap break-words font-mono leading-relaxed">
+                      {improvement.rewriteExample}
+                    </pre>
+                  </div>
 
-                <div className="flex flex-wrap items-center gap-4 text-xs">
-                  <span className="text-[#737373]">
-                    Estimated savings: ~{formatTokens(improvement.estimatedTokensSaved)} tokens ({formatCost(improvement.estimatedCostSaved)})
-                  </span>
-                  <span className="flex items-center gap-1 font-medium" style={{ color: scoreColor(rewriteScore) }}>
-                    <Zap className="w-3 h-3" />
-                    This rewrite would score ~{rewriteScore}/100
-                  </span>
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+                    <span className="flex items-center gap-1.5 font-semibold" style={{ color: scoreColor(rewriteScore) }}>
+                      <Zap className="w-3.5 h-3.5" />
+                      Estimated score: ~{rewriteScore}/100
+                    </span>
+                    <span className="text-[#525252]">
+                      Saves ~{formatTokens(improvement.estimatedTokensSaved)} tokens ({formatCost(improvement.estimatedCostSaved)})
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Pro Tips Card */}
             <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-colors">
-              <div className="flex items-center gap-2 mb-3">
-                <Lightbulb className="w-4 h-4 text-yellow-400" />
-                <p className="text-sm font-medium text-[#ededed]">Pro Tips</p>
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="w-6 h-6 rounded-md bg-yellow-900/30 flex items-center justify-center">
+                  <Lightbulb className="w-3.5 h-3.5 text-yellow-400" />
+                </div>
+                <p className="text-sm font-semibold text-[#ededed]">Pro Tips</p>
               </div>
-              <div className="space-y-2.5">
+              <div className="space-y-3">
                 {proTips.slice(0, 4).map((tip, i) => (
                   <div key={i} className="flex items-start gap-2.5">
-                    <Brain className="w-3.5 h-3.5 text-[#525252] mt-0.5 flex-shrink-0" />
+                    <Lightbulb className="w-3.5 h-3.5 text-[#404040] mt-0.5 flex-shrink-0" />
                     <p className="text-xs text-[#a3a3a3] leading-relaxed">{tip}</p>
                   </div>
                 ))}
@@ -880,15 +989,15 @@ export default function TurnDetailPage() {
           </div>
         </div>
 
-        {/* =========== Section 3: Navigation =========== */}
-        <div className="flex items-center justify-between pt-6 border-t border-[#262626]">
+        {/* =========== Navigation Footer =========== */}
+        <div className="flex items-center justify-between pt-6 border-t border-[#1a1a1a]">
           <button
             onClick={() => router.push(`/sessions/${sessionId}/turns/${turnNumber - 1}`)}
             disabled={turnNumber <= 1}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
               turnNumber <= 1
-                ? 'text-[#404040] cursor-not-allowed'
-                : 'text-[#a3a3a3] hover:text-[#ededed] hover:bg-[#141414] border border-[#262626]'
+                ? 'text-[#333] cursor-not-allowed'
+                : 'text-[#a3a3a3] hover:text-[#ededed] hover:bg-[#141414] border border-[#262626] hover:border-[#333]'
             }`}
           >
             <ArrowLeft className="w-4 h-4" />
@@ -897,18 +1006,18 @@ export default function TurnDetailPage() {
 
           <button
             onClick={() => router.push(`/sessions/${sessionId}`)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-[#737373] hover:text-[#ededed] hover:bg-[#141414] border border-[#262626] transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-[#525252] hover:text-[#ededed] hover:bg-[#141414] border border-[#1a1a1a] hover:border-[#262626] transition-all"
           >
-            Back to Session
+            All Turns
           </button>
 
           <button
             onClick={() => router.push(`/sessions/${sessionId}/turns/${turnNumber + 1}`)}
             disabled={turnNumber >= session.totalTurns}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
               turnNumber >= session.totalTurns
-                ? 'text-[#404040] cursor-not-allowed'
-                : 'text-[#a3a3a3] hover:text-[#ededed] hover:bg-[#141414] border border-[#262626]'
+                ? 'text-[#333] cursor-not-allowed'
+                : 'text-[#a3a3a3] hover:text-[#ededed] hover:bg-[#141414] border border-[#262626] hover:border-[#333]'
             }`}
           >
             Next Turn

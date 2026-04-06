@@ -6,8 +6,6 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
-  CheckCircle2,
-  XCircle,
   Loader2,
   AlertTriangle,
   Lightbulb,
@@ -16,6 +14,14 @@ import {
   Coins,
   Gauge,
   Layers,
+  Hash,
+  Wrench,
+  FileCode,
+  Zap,
+  ArrowRight,
+  ChevronRight,
+  TrendingUp,
+  Info,
 } from 'lucide-react';
 import {
   BarChart,
@@ -63,6 +69,7 @@ interface SessionAnalysis {
 interface SessionDetail {
   id: string;
   model: string | null;
+  intent: string | null;
   startedAt: string;
   endedAt: string | null;
   totalTurns: number;
@@ -77,13 +84,30 @@ interface SessionDetail {
   turns: TurnData[];
 }
 
+// --------------- Design tokens ---------------
+
+const INTENT_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
+  research: { bg: 'bg-purple-900/30', text: 'text-purple-400', dot: 'bg-purple-400' },
+  debug:    { bg: 'bg-red-900/30',    text: 'text-red-400',    dot: 'bg-red-400' },
+  feature:  { bg: 'bg-green-900/30',  text: 'text-green-400',  dot: 'bg-green-400' },
+  refactor: { bg: 'bg-blue-900/30',   text: 'text-blue-400',   dot: 'bg-blue-400' },
+  review:   { bg: 'bg-yellow-900/30', text: 'text-yellow-400', dot: 'bg-yellow-400' },
+  generate: { bg: 'bg-cyan-900/30',   text: 'text-cyan-400',   dot: 'bg-cyan-400' },
+  config:   { bg: 'bg-orange-900/30', text: 'text-orange-400', dot: 'bg-orange-400' },
+};
+
 // --------------- Helpers ---------------
 
 function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+function formatCostPrecise(usd: number): string {
+  return `$${usd.toFixed(4)}`;
+}
+
 function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
   return String(n);
 }
@@ -94,7 +118,7 @@ function formatMs(ms: number): string {
 }
 
 function formatDuration(start: string, end: string | null): string {
-  if (!end) return '—';
+  if (!end) return '--';
   const ms = new Date(end).getTime() - new Date(start).getTime();
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
@@ -103,22 +127,54 @@ function formatDuration(start: string, end: string | null): string {
 
 function scoreColor(score: number | null): string {
   if (score === null) return 'text-[#737373]';
-  if (score >= 70) return 'text-emerald-400';
+  if (score >= 80) return 'text-emerald-400';
+  if (score >= 60) return 'text-blue-400';
   if (score >= 40) return 'text-yellow-400';
   return 'text-red-400';
 }
 
+function scoreRingColor(score: number | null): string {
+  if (score === null) return '#737373';
+  if (score >= 80) return '#22c55e';
+  if (score >= 60) return '#3b82f6';
+  if (score >= 40) return '#eab308';
+  return '#ef4444';
+}
+
 function scoreBg(score: number | null): string {
   if (score === null) return 'bg-[#262626] text-[#737373]';
-  if (score >= 70) return 'bg-emerald-900/40 text-emerald-400';
+  if (score >= 80) return 'bg-emerald-900/40 text-emerald-400';
+  if (score >= 60) return 'bg-blue-900/40 text-blue-400';
   if (score >= 40) return 'bg-yellow-900/40 text-yellow-400';
   return 'bg-red-900/40 text-red-400';
+}
+
+function scoreLabel(score: number | null): string {
+  if (score === null) return '--';
+  if (score >= 80) return 'Excellent';
+  if (score >= 60) return 'Good';
+  if (score >= 40) return 'Needs Work';
+  return 'Poor';
+}
+
+function scoreBorderColor(score: number | null): string {
+  if (score === null) return 'border-l-[#404040]';
+  if (score >= 80) return 'border-l-emerald-400';
+  if (score >= 60) return 'border-l-blue-400';
+  if (score >= 40) return 'border-l-yellow-400';
+  return 'border-l-red-400';
 }
 
 function pctBarColor(pct: number): string {
   if (pct >= 80) return 'bg-red-500';
   if (pct >= 50) return 'bg-yellow-500';
   return 'bg-emerald-500';
+}
+
+function pctBarColorHex(pct: number): string {
+  if (pct >= 80) return '#ef4444';
+  if (pct >= 50) return '#eab308';
+  return '#22c55e';
 }
 
 function parseJsonSafe<T>(json: string | null, fallback: T): T {
@@ -130,7 +186,28 @@ function parseJsonSafe<T>(json: string | null, fallback: T): T {
   }
 }
 
-// --------------- Anti-pattern hints for heuristic analysis ---------------
+function guessIntent(session: SessionDetail): string {
+  if (session.intent) return session.intent.toLowerCase();
+  const text = (session.turns?.[0]?.promptText ?? '').toLowerCase();
+  if (/fix|bug|debug|error|issue/.test(text)) return 'debug';
+  if (/add|create|build|implement|feature/.test(text)) return 'feature';
+  if (/refactor|clean|rename|reorganize/.test(text)) return 'refactor';
+  if (/test|generate|write/.test(text)) return 'generate';
+  if (/review|check|audit/.test(text)) return 'review';
+  if (/config|setup|install/.test(text)) return 'config';
+  return 'research';
+}
+
+function sessionTitle(session: SessionDetail): string {
+  const prompt = session.turns?.[0]?.promptText;
+  if (prompt) {
+    const clean = prompt.replace(/\n/g, ' ').trim();
+    return clean.length > 50 ? clean.slice(0, 50) + '...' : clean;
+  }
+  return `Session ${session.id.slice(0, 8)}`;
+}
+
+// --------------- Anti-pattern tips ---------------
 
 const ANTI_PATTERN_TIPS: Record<string, { label: string; tip: string }> = {
   vague_verb: { label: 'Vague verb', tip: 'Add specific file paths, function names, and error messages' },
@@ -142,13 +219,94 @@ const ANTI_PATTERN_TIPS: Record<string, { label: string; tip: string }> = {
   overlong_prompt: { label: 'Overlong prompt', tip: 'Split into task description + separate context' },
   no_expected_output: { label: 'No expected output', tip: 'Describe what success looks like' },
   unanchored_ref: { label: 'Unanchored reference', tip: 'Re-state what "it" or "that" refers to' },
-  filler_words: { label: 'Filler words', tip: 'Remove "please", "could you" — saves tokens with no quality loss' },
+  filler_words: { label: 'Filler words', tip: 'Remove "please", "could you" -- saves tokens with no quality loss' },
 };
 
+// --------------- Score Ring SVG ---------------
+
+function ScoreRing({ score, size = 120 }: { score: number | null; size?: number }) {
+  const radius = (size - 12) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = score !== null ? Math.min(100, Math.max(0, score)) / 100 : 0;
+  const strokeDashoffset = circumference * (1 - pct);
+  const color = scoreRingColor(score);
+
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="#262626"
+          strokeWidth={6}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={6}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          className="transition-all duration-1000 ease-out"
+          style={{ filter: `drop-shadow(0 0 6px ${color}40)` }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={`text-3xl font-bold ${scoreColor(score)}`}>
+          {score !== null ? Math.round(score) : '--'}
+        </span>
+        <span className="text-[10px] text-[#737373] font-medium tracking-wider uppercase mt-0.5">
+          {scoreLabel(score)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// --------------- Skeleton ---------------
+
+function SkeletonBlock({ className }: { className?: string }) {
+  return <div className={`bg-[#1a1a1a] rounded animate-pulse ${className ?? ''}`} />;
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="min-h-screen bg-[#0a0a0a] p-6 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        <SkeletonBlock className="h-4 w-20 mb-6" />
+        <SkeletonBlock className="h-7 w-64 mb-3" />
+        <div className="flex gap-3 mb-8">
+          <SkeletonBlock className="h-6 w-20 rounded-full" />
+          <SkeletonBlock className="h-6 w-16 rounded-full" />
+          <SkeletonBlock className="h-6 w-14 rounded-full" />
+        </div>
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 space-y-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <SkeletonBlock key={i} className="h-32 w-full rounded-xl" />
+            ))}
+          </div>
+          <div className="lg:w-[40%] space-y-4">
+            <SkeletonBlock className="h-48 w-full rounded-xl" />
+            <SkeletonBlock className="h-32 w-full rounded-xl" />
+            <SkeletonBlock className="h-40 w-full rounded-xl" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --------------- HeuristicAnalysis ---------------
+
 function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: SessionDetail }) {
-  // Gather all anti-patterns across turns
   const patternCounts: Record<string, number> = {};
-  const retryCount = turns.filter(t => {
+  turns.forEach(t => {
     const ap = parseJsonSafe<string[]>(typeof t.antiPatterns === 'string' ? t.antiPatterns : JSON.stringify(t.antiPatterns), []);
     if (Array.isArray(ap)) {
       for (const p of ap) {
@@ -156,8 +314,7 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
         if (id) patternCounts[id] = (patternCounts[id] ?? 0) + 1;
       }
     }
-    return false;
-  }).length;
+  });
 
   const sortedPatterns = Object.entries(patternCounts).sort((a, b) => b[1] - a[1]);
   const scores = turns.map(t => t.heuristicScore ?? t.llmScore).filter((s): s is number => s !== null);
@@ -165,7 +322,6 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
   const lowScoreTurns = turns.filter(t => (t.heuristicScore ?? 100) < 50);
   const highScoreTurns = turns.filter(t => (t.heuristicScore ?? 0) >= 70);
 
-  // Generate summary
   let summary = '';
   if (turns.length === 0) {
     summary = 'No turns recorded in this session.';
@@ -177,7 +333,6 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
     summary = `This session scored ${avgScore ?? 0}/100 on average. Most prompts lacked specificity or context.`;
   }
 
-  // Top tip
   const topPattern = sortedPatterns[0];
   const topTip = topPattern
     ? ANTI_PATTERN_TIPS[topPattern[0]]?.tip ?? 'Add more context to your prompts for better results.'
@@ -186,27 +341,29 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
       : 'Try including file paths, error messages, and expected behavior in your prompts.';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Summary */}
       <div>
-        <p className="text-sm text-[#737373] mb-1">Summary</p>
-        <p className="text-sm text-[#ededed]">{summary}</p>
+        <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Summary</p>
+        <p className="text-sm text-[#ededed] leading-relaxed">{summary}</p>
       </div>
 
       {/* Top Issues */}
       {sortedPatterns.length > 0 && (
         <div>
-          <p className="text-sm text-[#737373] mb-2">Issues Found</p>
+          <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-3">Issues Found</p>
           <div className="space-y-2">
             {sortedPatterns.slice(0, 5).map(([id, count]) => {
               const info = ANTI_PATTERN_TIPS[id];
               return (
-                <div key={id} className="bg-[#1a1a1a] border border-[#262626] rounded-md p-3 flex items-start justify-between gap-3">
+                <div key={id} className="bg-[#141414] border border-[#262626] rounded-lg p-3.5 flex items-start justify-between gap-3 hover:border-[#404040] transition-colors">
                   <div>
                     <span className="text-sm font-medium text-[#ededed]">{info?.label ?? id}</span>
-                    <p className="text-xs text-[#737373] mt-0.5">{info?.tip ?? ''}</p>
+                    <p className="text-xs text-[#737373] mt-1 leading-relaxed">{info?.tip ?? ''}</p>
                   </div>
-                  <span className="text-xs bg-[#262626] text-[#737373] px-2 py-0.5 rounded-full whitespace-nowrap">{count}x</span>
+                  <span className="text-[10px] font-medium bg-[#1a1a1a] text-[#737373] px-2 py-0.5 rounded-full whitespace-nowrap border border-[#262626]">
+                    {count}x
+                  </span>
                 </div>
               );
             })}
@@ -216,20 +373,21 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
 
       {/* Top Tip */}
       <div>
-        <p className="text-sm text-[#737373] mb-1">Top Tip</p>
-        <div className="bg-[#1a1a1a] border border-[#262626] rounded-md p-3">
-          <p className="text-sm text-yellow-300">{topTip}</p>
+        <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Top Tip</p>
+        <div className="bg-yellow-900/10 border border-yellow-800/30 rounded-lg p-4 flex items-start gap-3">
+          <Lightbulb className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
+          <p className="text-sm text-yellow-300/90 leading-relaxed">{topTip}</p>
         </div>
       </div>
 
       {/* Score breakdown */}
       <div>
-        <p className="text-sm text-[#737373] mb-1">Turn Scores</p>
+        <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-3">Turn Scores</p>
         <div className="flex gap-2 flex-wrap">
           {turns.map((t) => {
             const s = t.heuristicScore ?? t.llmScore;
             return (
-              <span key={t.id} className={`text-xs font-medium px-2 py-1 rounded ${scoreBg(s)}`}>
+              <span key={t.id} className={`text-xs font-medium px-2.5 py-1 rounded-lg ${scoreBg(s)}`}>
                 T{t.turnNumber}: {s !== null ? `${Math.round(s)}` : '?'}
               </span>
             );
@@ -240,7 +398,7 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
   );
 }
 
-// --------------- Sub-components ---------------
+// --------------- TurnCard ---------------
 
 function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -255,35 +413,43 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
 
   return (
     <div
-      className="bg-[#141414] border border-[#262626] rounded-lg p-4 cursor-pointer hover:border-[#404040] transition-colors"
+      className={`bg-[#141414] border border-[#262626] border-l-[3px] ${scoreBorderColor(score)} rounded-lg p-4 cursor-pointer hover:bg-[#161616] hover:border-[#404040] hover:shadow-lg hover:shadow-black/20 transition-all duration-200 group`}
       onClick={() => router.push(`/sessions/${sessionId}/turns/${turn.turnNumber}`)}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-[#ededed] font-medium">Turn {turn.turnNumber}</span>
-          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${scoreBg(score)}`}>
+        <div className="flex items-center gap-2.5">
+          <span className="text-sm font-semibold text-[#ededed]">Turn {turn.turnNumber}</span>
+          <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${scoreBg(score)}`}>
             {score !== null ? `${Math.round(score)}/100` : 'N/A'}
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-[#737373]">
           {turn.responseTokensEst !== null && (
-            <span>{formatTokens(turn.responseTokensEst)} tokens</span>
+            <span className="flex items-center gap-1">
+              <Layers className="w-3 h-3" />
+              {formatTokens(turn.responseTokensEst)}
+            </span>
           )}
-          {turn.latencyMs !== null && <span>{formatMs(turn.latencyMs)}</span>}
+          {turn.latencyMs !== null && (
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {formatMs(turn.latencyMs)}
+            </span>
+          )}
         </div>
       </div>
 
       {/* Prompt */}
       {turn.promptText && (
         <div className="mb-3">
-          <p className="text-sm text-[#ededed]/80 whitespace-pre-wrap">
+          <p className="text-sm text-[#a3a3a3] leading-relaxed whitespace-pre-wrap">
             {expanded || !promptLong ? turn.promptText : turn.promptText.slice(0, 200) + '...'}
           </p>
           {promptLong && (
             <button
               onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-              className="mt-1 text-xs text-blue-400 hover:text-blue-300 inline-flex items-center gap-1"
+              className="mt-1.5 text-xs text-[#8b5cf6] hover:text-[#a78bfa] inline-flex items-center gap-1 transition-colors"
             >
               {expanded ? (
                 <>
@@ -305,12 +471,12 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
           {antiPatterns.map((ap, i) => (
             <span
               key={i}
-              className={`text-xs px-2 py-0.5 rounded-full ${
+              className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
                 ap.severity === 'high'
-                  ? 'bg-red-900/30 text-red-400'
+                  ? 'bg-red-900/20 text-red-400 border-red-800/40'
                   : ap.severity === 'medium'
-                    ? 'bg-yellow-900/30 text-yellow-400'
-                    : 'bg-[#262626] text-[#737373]'
+                    ? 'bg-yellow-900/20 text-yellow-400 border-yellow-800/40'
+                    : 'bg-[#1a1a1a] text-[#737373] border-[#262626]'
               }`}
               title={ap.hint}
             >
@@ -322,23 +488,23 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
 
       {/* Suggestion */}
       {turn.suggestionText && (
-        <div className="bg-[#1a1a1a] border border-[#262626] rounded-md p-3 mb-3">
-          <div className="flex items-center gap-2 mb-1">
+        <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-3 mb-3">
+          <div className="flex items-center gap-2 mb-1.5">
             <Lightbulb className="w-3.5 h-3.5 text-yellow-400" />
-            <span className="text-xs font-medium text-[#ededed]">Suggestion</span>
+            <span className="text-[11px] font-medium text-[#a3a3a3]">Suggestion</span>
             {turn.suggestionAccepted !== null && (
               <span
-                className={`text-xs px-1.5 py-0.5 rounded-full ${
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
                   turn.suggestionAccepted
-                    ? 'bg-emerald-900/40 text-emerald-400'
-                    : 'bg-red-900/40 text-red-400'
+                    ? 'bg-emerald-900/30 text-emerald-400'
+                    : 'bg-red-900/30 text-red-400'
                 }`}
               >
                 {turn.suggestionAccepted ? 'Accepted' : 'Rejected'}
               </span>
             )}
           </div>
-          <p className="text-xs text-[#737373]">{turn.suggestionText}</p>
+          <p className="text-xs text-[#737373] leading-relaxed">{turn.suggestionText}</p>
         </div>
       )}
 
@@ -346,39 +512,42 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
       {toolCalls.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-3">
           {toolCalls.map((tc, i) => (
-            <span key={i} className="text-xs bg-[#262626] text-[#737373] px-2 py-0.5 rounded">
+            <span key={i} className="inline-flex items-center gap-1 text-[10px] font-medium bg-[#1a1a1a] text-[#737373] px-2 py-0.5 rounded border border-[#262626]">
+              <Wrench className="w-2.5 h-2.5" />
               {tc}
             </span>
           ))}
         </div>
       )}
 
-      {/* View details link */}
-      <div className="flex justify-end pt-2 border-t border-[#262626]/50">
-        <span className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-          View details &rarr;
+      {/* View details */}
+      <div className="flex justify-end pt-3 border-t border-[#1a1a1a]">
+        <span className="text-xs text-[#8b5cf6] group-hover:text-[#a78bfa] transition-colors inline-flex items-center gap-1">
+          View details <ArrowRight className="w-3 h-3" />
         </span>
       </div>
     </div>
   );
 }
 
+// --------------- PercentBar ---------------
+
 function PercentBar({ label, value, icon }: { label: string; value: number | null; icon: React.ReactNode }) {
   const pct = value !== null ? Math.min(100, Math.max(0, value)) : 0;
   return (
-    <div className="mb-4">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-sm text-[#737373] flex items-center gap-1.5">
+    <div className="mb-5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-[#737373] flex items-center gap-1.5 font-medium">
           {icon}
           {label}
         </span>
-        <span className="text-sm font-medium text-[#ededed]">
-          {value !== null ? `${Math.round(value)}%` : '—'}
+        <span className="text-xs font-semibold text-[#ededed]">
+          {value !== null ? `${Math.round(value)}%` : '--'}
         </span>
       </div>
-      <div className="h-2 bg-[#262626] rounded-full overflow-hidden">
+      <div className="h-2 bg-[#1a1a1a] rounded-full overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all ${pctBarColor(pct)}`}
+          className={`h-full rounded-full transition-all duration-1000 ease-out ${pctBarColor(pct)}`}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -396,6 +565,11 @@ export default function SessionDetailPage() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     fetch(`/api/sessions/${sessionId}`)
@@ -404,8 +578,6 @@ export default function SessionDetailPage() {
         return r.json();
       })
       .then((data) => {
-        // API returns { session, turns, toolEvents, analysis }
-        // Merge into the shape our component expects
         const merged: SessionDetail = {
           ...data.session,
           analysis: data.analysis ? JSON.stringify(data.analysis) : null,
@@ -418,25 +590,25 @@ export default function SessionDetailPage() {
   }, [sessionId]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-[#737373]" />
-      </div>
-    );
+    return <LoadingSkeleton />;
   }
 
   if (error || !session) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6">
-        <div className="max-w-6xl mx-auto">
+      <div className="min-h-screen bg-[#0a0a0a] p-6 md:p-8">
+        <div className="max-w-7xl mx-auto">
           <button
             onClick={() => router.push('/sessions')}
-            className="inline-flex items-center gap-1 text-sm text-[#737373] hover:text-[#ededed] mb-4 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-[#737373] hover:text-[#ededed] mb-6 transition-colors group"
           >
-            <ArrowLeft className="w-4 h-4" /> Sessions
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" /> Sessions
           </button>
-          <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 text-red-300">
-            {error ?? 'Session not found'}
+          <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-5 text-red-300 flex items-start gap-3">
+            <div className="w-2 h-2 rounded-full bg-red-400 mt-2 shrink-0" />
+            <div>
+              <p className="font-medium text-red-300 mb-1">{error ? 'Failed to load session' : 'Session not found'}</p>
+              <p className="text-sm text-red-400/80">{error ?? 'The session you are looking for does not exist.'}</p>
+            </div>
           </div>
         </div>
       </div>
@@ -445,44 +617,92 @@ export default function SessionDetailPage() {
 
   const analysis = parseJsonSafe<SessionAnalysis | null>(session.analysis, null);
   const turns = session.turns ?? [];
+  const intent = guessIntent(session);
+  const intentStyle = INTENT_STYLES[intent] ?? INTENT_STYLES.research;
+
   const costPerTurn = turns.map((t, i) => ({
-    turn: i + 1,
+    turn: `T${i + 1}`,
     cost: session.totalCostUsd / (session.totalTurns || 1),
     tokens: t.responseTokensEst ?? 0,
   }));
   const contextPerTurn = turns.map((t, i) => ({
-    turn: i + 1,
+    turn: `T${i + 1}`,
     context: t.contextUsedPct ?? 0,
   }));
 
+  const costPerTurnAvg = session.totalTurns > 0 ? session.totalCostUsd / session.totalTurns : 0;
+
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-6">
+    <div className={`min-h-screen bg-[#0a0a0a] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
       <div className="max-w-7xl mx-auto">
+
         {/* Back button */}
         <button
           onClick={() => router.push('/sessions')}
-          className="inline-flex items-center gap-1 text-sm text-[#737373] hover:text-[#ededed] mb-6 transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-[#737373] hover:text-[#ededed] mb-6 transition-colors group"
         >
-          <ArrowLeft className="w-4 h-4" /> Sessions
+          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+          <span className="group-hover:underline underline-offset-4">Sessions</span>
         </button>
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <h1 className="text-2xl font-semibold text-[#ededed]">
-            Session {session.id?.slice(0, 8) ?? 'Unknown'}
+        {/* Header section */}
+        <div className="mb-8">
+          <h1 className="text-2xl font-semibold text-[#ededed] mb-3">
+            {sessionTitle(session)}
           </h1>
-          <span className="text-sm text-[#737373]">{session.model ?? 'Unknown model'}</span>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Intent badge */}
+            <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${intentStyle.bg} ${intentStyle.text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${intentStyle.dot}`} />
+              {intent}
+            </span>
+            {/* Model */}
+            <span className="text-xs text-[#737373] bg-[#1a1a1a] border border-[#262626] px-2.5 py-1 rounded-full">
+              {session.model ?? 'Unknown'}
+            </span>
+            {/* Turns */}
+            <span className="text-xs text-[#737373] flex items-center gap-1">
+              <Hash className="w-3 h-3" /> {session.totalTurns} turns
+            </span>
+            {/* Cost */}
+            <span className="text-xs text-[#737373] flex items-center gap-1">
+              <Coins className="w-3 h-3" /> {formatCost(session.totalCostUsd)}
+            </span>
+            {/* Duration */}
+            <span className="text-xs text-[#737373] flex items-center gap-1">
+              <Clock className="w-3 h-3" /> {formatDuration(session.startedAt, session.endedAt)}
+            </span>
+          </div>
         </div>
 
-        {/* Two-column layout */}
+        {/* Two-column layout (60/40) */}
         <div className="flex flex-col lg:flex-row gap-6 mb-8">
-          {/* LEFT: Turn timeline */}
-          <div className="flex-1 lg:w-[60%] space-y-4">
-            <h2 className="text-lg font-medium text-[#ededed] mb-2">Turn Timeline</h2>
+
+          {/* LEFT: Turn Timeline */}
+          <div className="flex-1 lg:w-[60%] min-w-0">
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-lg font-medium text-[#ededed]">Turn Timeline</h2>
+              <span className="text-xs font-medium text-[#737373] bg-[#1a1a1a] border border-[#262626] px-2 py-0.5 rounded-full">
+                {turns.length}
+              </span>
+            </div>
             {turns.length === 0 ? (
-              <p className="text-[#737373]">No turns recorded.</p>
+              <div className="bg-[#141414] border border-[#262626] rounded-xl p-12 text-center">
+                <Info className="w-8 h-8 text-[#404040] mx-auto mb-3" />
+                <p className="text-sm text-[#737373]">No turns recorded.</p>
+              </div>
             ) : (
-              turns.map((turn) => <TurnCard key={turn.id} turn={turn} sessionId={sessionId} />)
+              <div className="space-y-3">
+                {turns.map((turn, idx) => (
+                  <div
+                    key={turn.id}
+                    className="transition-all duration-300"
+                    style={{ animationDelay: `${idx * 50}ms` }}
+                  >
+                    <TurnCard turn={turn} sessionId={sessionId} />
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
@@ -490,17 +710,48 @@ export default function SessionDetailPage() {
           <div className="lg:w-[40%] space-y-4">
             <h2 className="text-lg font-medium text-[#ededed] mb-2">Session Metrics</h2>
 
-            {/* Efficiency score */}
-            <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 text-center">
-              <p className="text-sm text-[#737373] mb-1">Efficiency Score</p>
-              <p className={`text-5xl font-bold ${scoreColor(session.efficiencyScore)}`}>
-                {session.efficiencyScore !== null ? Math.round(session.efficiencyScore) : '—'}
-              </p>
-              <p className="text-xs text-[#737373] mt-1">/ 100</p>
+            {/* Efficiency score ring */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-6 flex flex-col items-center">
+              <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4">Efficiency Score</p>
+              <ScoreRing score={session.efficiencyScore} size={140} />
             </div>
 
-            {/* Bars */}
-            <div className="bg-[#141414] border border-[#262626] rounded-lg p-5">
+            {/* Stat grid */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-5 grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                  <Coins className="w-3 h-3" /> Total Cost
+                </p>
+                <p className="text-xl font-semibold text-[#ededed] font-mono">{formatCost(session.totalCostUsd)}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                  <Clock className="w-3 h-3" /> Duration
+                </p>
+                <p className="text-xl font-semibold text-[#ededed]">{formatDuration(session.startedAt, session.endedAt)}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                  <Hash className="w-3 h-3" /> Turns
+                </p>
+                <p className="text-xl font-semibold text-[#ededed]">{session.totalTurns}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                  <Wrench className="w-3 h-3" /> Tool Calls
+                </p>
+                <p className="text-xl font-semibold text-[#ededed]">{session.totalToolCalls}</p>
+              </div>
+              <div className="space-y-1 col-span-2 pt-2 border-t border-[#1a1a1a]">
+                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                  <Zap className="w-3 h-3" /> Cost per Turn (avg)
+                </p>
+                <p className="text-xl font-semibold text-[#ededed] font-mono">{formatCostPrecise(costPerTurnAvg)}</p>
+              </div>
+            </div>
+
+            {/* Progress bars */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
               <PercentBar
                 label="Token Waste Ratio"
                 value={session.tokenWasteRatio !== null ? session.tokenWasteRatio * 100 : null}
@@ -513,43 +764,17 @@ export default function SessionDetailPage() {
               />
             </div>
 
-            {/* Stats */}
-            <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs text-[#737373] flex items-center gap-1">
-                  <Coins className="w-3 h-3" /> Total Cost
-                </p>
-                <p className="text-lg font-semibold text-[#ededed]">
-                  {formatCost(session.totalCostUsd)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-[#737373] flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> Duration
-                </p>
-                <p className="text-lg font-semibold text-[#ededed]">
-                  {formatDuration(session.startedAt, session.endedAt)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-[#737373]">Turns</p>
-                <p className="text-lg font-semibold text-[#ededed]">{session.totalTurns}</p>
-              </div>
-              <div>
-                <p className="text-xs text-[#737373]">Tool Calls</p>
-                <p className="text-lg font-semibold text-[#ededed]">{session.totalToolCalls}</p>
-              </div>
-            </div>
-
             {/* Cost per turn chart */}
             {costPerTurn.length > 1 && (
-              <div className="bg-[#141414] border border-[#262626] rounded-lg p-5">
-                <p className="text-sm text-[#737373] mb-3">Cost per Turn</p>
+              <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
+                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
+                  <TrendingUp className="w-3.5 h-3.5" /> Cost per Turn
+                </p>
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={costPerTurn}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
-                    <XAxis dataKey="turn" tick={{ fill: '#737373', fontSize: 11 }} />
-                    <YAxis tick={{ fill: '#737373', fontSize: 11 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                    <XAxis dataKey="turn" tick={{ fill: '#737373', fontSize: 10 }} axisLine={{ stroke: '#262626' }} tickLine={false} />
+                    <YAxis tick={{ fill: '#737373', fontSize: 10 }} axisLine={{ stroke: '#262626' }} tickLine={false} />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: '#141414',
@@ -557,6 +782,7 @@ export default function SessionDetailPage() {
                         borderRadius: 8,
                         color: '#ededed',
                         fontSize: 12,
+                        boxShadow: '0 10px 15px rgba(0,0,0,0.3)',
                       }}
                       formatter={(value: number) => [`$${value.toFixed(4)}`, 'Cost']}
                     />
@@ -566,18 +792,22 @@ export default function SessionDetailPage() {
               </div>
             )}
 
-            {/* Context usage per turn chart */}
+            {/* Context usage per turn */}
             {contextPerTurn.length > 1 && (
-              <div className="bg-[#141414] border border-[#262626] rounded-lg p-5">
-                <p className="text-sm text-[#737373] mb-3">Context Usage per Turn</p>
+              <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
+                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5" /> Context Usage per Turn
+                </p>
                 <ResponsiveContainer width="100%" height={160}>
                   <LineChart data={contextPerTurn}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
-                    <XAxis dataKey="turn" tick={{ fill: '#737373', fontSize: 11 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                    <XAxis dataKey="turn" tick={{ fill: '#737373', fontSize: 10 }} axisLine={{ stroke: '#262626' }} tickLine={false} />
                     <YAxis
-                      tick={{ fill: '#737373', fontSize: 11 }}
+                      tick={{ fill: '#737373', fontSize: 10 }}
                       domain={[0, 100]}
                       unit="%"
+                      axisLine={{ stroke: '#262626' }}
+                      tickLine={false}
                     />
                     <Tooltip
                       contentStyle={{
@@ -586,6 +816,7 @@ export default function SessionDetailPage() {
                         borderRadius: 8,
                         color: '#ededed',
                         fontSize: 12,
+                        boxShadow: '0 10px 15px rgba(0,0,0,0.3)',
                       }}
                       formatter={(value: number) => [`${Math.round(value)}%`, 'Context']}
                     />
@@ -594,29 +825,33 @@ export default function SessionDetailPage() {
                       dataKey="context"
                       stroke="#8b5cf6"
                       strokeWidth={2}
-                      dot={{ fill: '#8b5cf6', r: 3 }}
+                      dot={{ fill: '#8b5cf6', r: 3, strokeWidth: 0 }}
+                      activeDot={{ fill: '#a78bfa', r: 5, strokeWidth: 0 }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
 
-            {/* Model recommendation */}
+            {/* Model recommendations */}
             {analysis?.modelRecommendations && analysis.modelRecommendations.length > 0 && (
-              <div className="bg-[#141414] border border-[#262626] rounded-lg p-5">
-                <p className="text-sm text-[#737373] mb-3 flex items-center gap-1.5">
+              <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
+                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
                   <Gauge className="w-3.5 h-3.5" /> Model Recommendations
                 </p>
                 <div className="space-y-2">
                   {analysis.modelRecommendations.map((rec, i) => (
                     <div
                       key={i}
-                      className="text-xs bg-[#1a1a1a] rounded-md p-2 flex justify-between"
+                      className="text-xs bg-[#0a0a0a] border border-[#262626] rounded-lg p-3 flex items-center justify-between"
                     >
-                      <span className="text-[#ededed]">
-                        Turn {rec.turn}: {rec.used} &rarr; {rec.recommended}
+                      <span className="text-[#a3a3a3]">
+                        Turn {rec.turn}:
+                        <span className="text-[#737373] mx-1">{rec.used}</span>
+                        <ChevronRight className="w-3 h-3 inline text-[#737373]" />
+                        <span className="text-[#ededed] ml-1 font-medium">{rec.recommended}</span>
                       </span>
-                      <span className="text-emerald-400">save {formatCost(rec.savingsUsd)}</span>
+                      <span className="text-emerald-400 font-medium">save {formatCost(rec.savingsUsd)}</span>
                     </div>
                   ))}
                 </div>
@@ -626,26 +861,30 @@ export default function SessionDetailPage() {
         </div>
 
         {/* Bottom: Session Analysis */}
-        <div className="bg-[#141414] border border-[#262626] rounded-lg p-6">
-          <h2 className="text-lg font-medium text-[#ededed] mb-4 flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-purple-400" /> Session Analysis
+        <div className="bg-[#141414] border border-[#262626] rounded-xl p-6">
+          <h2 className="text-lg font-medium text-[#ededed] mb-5 flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-purple-900/30 flex items-center justify-center">
+              <Sparkles className="w-4 h-4 text-purple-400" />
+            </div>
+            Session Analysis
           </h2>
           {analysis ? (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div>
-                <p className="text-sm text-[#737373] mb-1">Summary</p>
-                <p className="text-sm text-[#ededed]">{analysis.summary}</p>
+                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Summary</p>
+                <p className="text-sm text-[#ededed] leading-relaxed">{analysis.summary}</p>
               </div>
               <div>
-                <p className="text-sm text-[#737373] mb-1">Top Tip</p>
-                <div className="bg-[#1a1a1a] border border-[#262626] rounded-md p-3">
-                  <p className="text-sm text-yellow-300">{analysis.topTip}</p>
+                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Top Tip</p>
+                <div className="bg-yellow-900/10 border border-yellow-800/30 rounded-lg p-4 flex items-start gap-3">
+                  <Lightbulb className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
+                  <p className="text-sm text-yellow-300/90 leading-relaxed">{analysis.topTip}</p>
                 </div>
               </div>
               <div>
-                <p className="text-sm text-[#737373] mb-1">Rewritten First Prompt</p>
-                <div className="bg-[#1a1a1a] border border-[#262626] rounded-md p-3">
-                  <p className="text-sm text-[#ededed] italic">
+                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Rewritten First Prompt</p>
+                <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-4">
+                  <p className="text-sm text-[#ededed] italic leading-relaxed">
                     {analysis.rewrittenFirstPrompt}
                   </p>
                 </div>
