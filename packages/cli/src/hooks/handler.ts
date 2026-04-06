@@ -364,6 +364,12 @@ async function handleStopWithPayload(payload: Record<string, unknown>): Promise<
           .run();
       }
     }
+
+    // Fire-and-forget: sync to Supabase after each turn completes
+    const { syncToSupabase, isSupabaseConfigured } = await import('evaluateai-core');
+    if (isSupabaseConfigured()) {
+      syncToSupabase().catch(() => {});
+    }
   } catch {
     // Never fail
   }
@@ -413,6 +419,12 @@ async function handleSessionEndWithPayload(payload: Record<string, unknown>): Pr
 
     // Fire-and-forget: analyze session with LLM
     analyzeSession(session as any, sessionTurns as any[]).catch(() => {});
+
+    // Fire-and-forget: auto-sync to Supabase
+    const { syncToSupabase, isSupabaseConfigured } = await import('evaluateai-core');
+    if (isSupabaseConfigured()) {
+      syncToSupabase().catch(() => {});
+    }
   } catch {
     // Never fail
   }
