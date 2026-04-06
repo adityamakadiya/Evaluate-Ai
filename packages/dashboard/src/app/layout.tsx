@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from "react";
 import { Inter } from "next/font/google";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -9,6 +10,8 @@ import {
   BarChart3,
   Settings,
   RefreshCw,
+  Sun,
+  Moon,
 } from "lucide-react";
 import "./globals.css";
 
@@ -30,9 +33,22 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const pathname = usePathname();
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  useEffect(() => {
+    const saved = localStorage.getItem('evaluateai-theme') as 'dark' | 'light' | null;
+    if (saved) setTheme(saved);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('evaluateai-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`}>
+    <html lang="en" className={`${inter.variable} h-full antialiased`} data-theme={theme}>
       <head>
         <title>EvaluateAI</title>
         <meta name="description" content="AI coding assistant evaluation dashboard" />
@@ -40,8 +56,9 @@ export default function RootLayout({
       <body className="min-h-full flex bg-[var(--bg-primary)] text-[var(--text-primary)]">
         {/* Sidebar */}
         <aside className="fixed inset-y-0 left-0 z-30 flex w-60 flex-col border-r border-[var(--border-primary)] bg-[var(--bg-card)]">
-          {/* Logo */}
-          <div className="flex h-14 items-center gap-3 px-5 border-b border-[var(--border-primary)]">
+          {/* Logo + Theme Toggle */}
+          <div className="flex h-14 items-center justify-between px-5 border-b border-[var(--border-primary)]">
+            <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[#8b5cf6] to-[#6d28d9] flex items-center justify-center shadow-[0_0_12px_rgba(139,92,246,0.3)]">
               <svg
                 width="16"
@@ -69,6 +86,14 @@ export default function RootLayout({
             <span className="text-[15px] font-semibold tracking-tight text-[var(--text-primary)]">
               Evaluate<span className="text-[#8b5cf6]">AI</span>
             </span>
+            </div>
+            <button
+              onClick={toggleTheme}
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-all duration-200"
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            >
+              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
           </div>
 
           {/* Navigation */}

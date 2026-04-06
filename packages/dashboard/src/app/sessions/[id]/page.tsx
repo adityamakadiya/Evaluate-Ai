@@ -126,7 +126,7 @@ function formatDuration(start: string, end: string | null): string {
 }
 
 function scoreColor(score: number | null): string {
-  if (score === null) return 'text-[#737373]';
+  if (score === null) return 'text-[var(--text-muted)]';
   if (score >= 80) return 'text-emerald-400';
   if (score >= 60) return 'text-blue-400';
   if (score >= 40) return 'text-yellow-400';
@@ -134,7 +134,7 @@ function scoreColor(score: number | null): string {
 }
 
 function scoreRingColor(score: number | null): string {
-  if (score === null) return '#737373';
+  if (score === null) return 'var(--text-muted)';
   if (score >= 80) return '#22c55e';
   if (score >= 60) return '#3b82f6';
   if (score >= 40) return '#eab308';
@@ -142,7 +142,7 @@ function scoreRingColor(score: number | null): string {
 }
 
 function scoreBg(score: number | null): string {
-  if (score === null) return 'bg-[#262626] text-[#737373]';
+  if (score === null) return 'bg-[var(--border-primary)] text-[var(--text-muted)]';
   if (score >= 80) return 'bg-emerald-900/40 text-emerald-400';
   if (score >= 60) return 'bg-blue-900/40 text-blue-400';
   if (score >= 40) return 'bg-yellow-900/40 text-yellow-400';
@@ -158,7 +158,7 @@ function scoreLabel(score: number | null): string {
 }
 
 function scoreBorderColor(score: number | null): string {
-  if (score === null) return 'border-l-[#404040]';
+  if (score === null) return 'border-l-[var(--border-hover)]';
   if (score >= 80) return 'border-l-emerald-400';
   if (score >= 60) return 'border-l-blue-400';
   if (score >= 40) return 'border-l-yellow-400';
@@ -239,7 +239,7 @@ function ScoreRing({ score, size = 120 }: { score: number | null; size?: number 
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#262626"
+          stroke="var(--border-primary)"
           strokeWidth={6}
         />
         <circle
@@ -260,7 +260,7 @@ function ScoreRing({ score, size = 120 }: { score: number | null; size?: number 
         <span className={`text-3xl font-bold ${scoreColor(score)}`}>
           {score !== null ? Math.round(score) : '--'}
         </span>
-        <span className="text-[10px] text-[#737373] font-medium tracking-wider uppercase mt-0.5">
+        <span className="text-[10px] text-[var(--text-muted)] font-medium tracking-wider uppercase mt-0.5">
           {scoreLabel(score)}
         </span>
       </div>
@@ -271,12 +271,12 @@ function ScoreRing({ score, size = 120 }: { score: number | null; size?: number 
 // --------------- Skeleton ---------------
 
 function SkeletonBlock({ className }: { className?: string }) {
-  return <div className={`bg-[#1a1a1a] rounded animate-pulse ${className ?? ''}`} />;
+  return <div className={`bg-[var(--bg-elevated)] rounded animate-pulse ${className ?? ''}`} />;
 }
 
 function LoadingSkeleton() {
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-6 md:p-8">
+    <div className="min-h-screen bg-[var(--bg-primary)] p-6 md:p-8">
       <div className="max-w-7xl mx-auto">
         <SkeletonBlock className="h-4 w-20 mb-6" />
         <SkeletonBlock className="h-7 w-64 mb-3" />
@@ -344,24 +344,24 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
     <div className="space-y-5">
       {/* Summary */}
       <div>
-        <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Summary</p>
-        <p className="text-sm text-[#ededed] leading-relaxed">{summary}</p>
+        <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-2">Summary</p>
+        <p className="text-sm text-[var(--text-primary)] leading-relaxed">{summary}</p>
       </div>
 
       {/* Top Issues */}
       {sortedPatterns.length > 0 && (
         <div>
-          <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-3">Issues Found</p>
+          <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-3">Issues Found</p>
           <div className="space-y-2">
             {sortedPatterns.slice(0, 5).map(([id, count]) => {
               const info = ANTI_PATTERN_TIPS[id];
               return (
-                <div key={id} className="bg-[#141414] border border-[#262626] rounded-lg p-3.5 flex items-start justify-between gap-3 hover:border-[#404040] transition-colors">
+                <div key={id} className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-3.5 flex items-start justify-between gap-3 hover:border-[var(--border-hover)] transition-colors">
                   <div>
-                    <span className="text-sm font-medium text-[#ededed]">{info?.label ?? id}</span>
-                    <p className="text-xs text-[#737373] mt-1 leading-relaxed">{info?.tip ?? ''}</p>
+                    <span className="text-sm font-medium text-[var(--text-primary)]">{info?.label ?? id}</span>
+                    <p className="text-xs text-[var(--text-muted)] mt-1 leading-relaxed">{info?.tip ?? ''}</p>
                   </div>
-                  <span className="text-[10px] font-medium bg-[#1a1a1a] text-[#737373] px-2 py-0.5 rounded-full whitespace-nowrap border border-[#262626]">
+                  <span className="text-[10px] font-medium bg-[var(--bg-elevated)] text-[var(--text-muted)] px-2 py-0.5 rounded-full whitespace-nowrap border border-[var(--border-primary)]">
                     {count}x
                   </span>
                 </div>
@@ -373,7 +373,7 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
 
       {/* Top Tip */}
       <div>
-        <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Top Tip</p>
+        <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-2">Top Tip</p>
         <div className="bg-yellow-900/10 border border-yellow-800/30 rounded-lg p-4 flex items-start gap-3">
           <Lightbulb className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
           <p className="text-sm text-yellow-300/90 leading-relaxed">{topTip}</p>
@@ -382,7 +382,7 @@ function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: Ses
 
       {/* Score breakdown */}
       <div>
-        <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-3">Turn Scores</p>
+        <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-3">Turn Scores</p>
         <div className="flex gap-2 flex-wrap">
           {turns.map((t) => {
             const s = t.heuristicScore ?? t.llmScore;
@@ -413,18 +413,18 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
 
   return (
     <div
-      className={`bg-[#141414] border border-[#262626] border-l-[3px] ${scoreBorderColor(score)} rounded-lg p-4 cursor-pointer hover:bg-[#161616] hover:border-[#404040] hover:shadow-lg hover:shadow-black/20 transition-all duration-200 group`}
+      className={`bg-[var(--bg-card)] border border-[var(--border-primary)] border-l-[3px] ${scoreBorderColor(score)} rounded-lg p-4 cursor-pointer hover:bg-[#161616] hover:border-[var(--border-hover)] hover:shadow-lg hover:shadow-black/20 transition-all duration-200 group`}
       onClick={() => router.push(`/sessions/${sessionId}/turns/${turn.turnNumber}`)}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-sm font-semibold text-[#ededed]">Turn {turn.turnNumber}</span>
+          <span className="text-sm font-semibold text-[var(--text-primary)]">Turn {turn.turnNumber}</span>
           <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${scoreBg(score)}`}>
             {score !== null ? `${Math.round(score)}/100` : 'N/A'}
           </span>
         </div>
-        <div className="flex items-center gap-3 text-xs text-[#737373]">
+        <div className="flex items-center gap-3 text-xs text-[var(--text-muted)]">
           {turn.responseTokensEst !== null && (
             <span className="flex items-center gap-1">
               <Layers className="w-3 h-3" />
@@ -443,7 +443,7 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
       {/* Prompt */}
       {turn.promptText && (
         <div className="mb-3">
-          <p className="text-sm text-[#a3a3a3] leading-relaxed whitespace-pre-wrap">
+          <p className="text-sm text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">
             {expanded || !promptLong ? turn.promptText : turn.promptText.slice(0, 200) + '...'}
           </p>
           {promptLong && (
@@ -476,7 +476,7 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
                   ? 'bg-red-900/20 text-red-400 border-red-800/40'
                   : ap.severity === 'medium'
                     ? 'bg-yellow-900/20 text-yellow-400 border-yellow-800/40'
-                    : 'bg-[#1a1a1a] text-[#737373] border-[#262626]'
+                    : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] border-[var(--border-primary)]'
               }`}
               title={ap.hint}
             >
@@ -488,10 +488,10 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
 
       {/* Suggestion */}
       {turn.suggestionText && (
-        <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-3 mb-3">
+        <div className="bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-lg p-3 mb-3">
           <div className="flex items-center gap-2 mb-1.5">
             <Lightbulb className="w-3.5 h-3.5 text-yellow-400" />
-            <span className="text-[11px] font-medium text-[#a3a3a3]">Suggestion</span>
+            <span className="text-[11px] font-medium text-[var(--text-secondary)]">Suggestion</span>
             {turn.suggestionAccepted !== null && (
               <span
                 className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
@@ -504,7 +504,7 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
               </span>
             )}
           </div>
-          <p className="text-xs text-[#737373] leading-relaxed">{turn.suggestionText}</p>
+          <p className="text-xs text-[var(--text-muted)] leading-relaxed">{turn.suggestionText}</p>
         </div>
       )}
 
@@ -512,7 +512,7 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
       {toolCalls.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-3">
           {toolCalls.map((tc, i) => (
-            <span key={i} className="inline-flex items-center gap-1 text-[10px] font-medium bg-[#1a1a1a] text-[#737373] px-2 py-0.5 rounded border border-[#262626]">
+            <span key={i} className="inline-flex items-center gap-1 text-[10px] font-medium bg-[var(--bg-elevated)] text-[var(--text-muted)] px-2 py-0.5 rounded border border-[var(--border-primary)]">
               <Wrench className="w-2.5 h-2.5" />
               {tc}
             </span>
@@ -521,7 +521,7 @@ function TurnCard({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
       )}
 
       {/* View details */}
-      <div className="flex justify-end pt-3 border-t border-[#1a1a1a]">
+      <div className="flex justify-end pt-3 border-t border-[var(--bg-elevated)]">
         <span className="text-xs text-[#8b5cf6] group-hover:text-[#a78bfa] transition-colors inline-flex items-center gap-1">
           View details <ArrowRight className="w-3 h-3" />
         </span>
@@ -537,15 +537,15 @@ function PercentBar({ label, value, icon }: { label: string; value: number | nul
   return (
     <div className="mb-5">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-[#737373] flex items-center gap-1.5 font-medium">
+        <span className="text-xs text-[var(--text-muted)] flex items-center gap-1.5 font-medium">
           {icon}
           {label}
         </span>
-        <span className="text-xs font-semibold text-[#ededed]">
+        <span className="text-xs font-semibold text-[var(--text-primary)]">
           {value !== null ? `${Math.round(value)}%` : '--'}
         </span>
       </div>
-      <div className="h-2 bg-[#1a1a1a] rounded-full overflow-hidden">
+      <div className="h-2 bg-[var(--bg-elevated)] rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-1000 ease-out ${pctBarColor(pct)}`}
           style={{ width: `${pct}%` }}
@@ -595,11 +595,11 @@ export default function SessionDetailPage() {
 
   if (error || !session) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6 md:p-8">
+      <div className="min-h-screen bg-[var(--bg-primary)] p-6 md:p-8">
         <div className="max-w-7xl mx-auto">
           <button
             onClick={() => router.push('/sessions')}
-            className="inline-flex items-center gap-1.5 text-sm text-[#737373] hover:text-[#ededed] mb-6 transition-colors group"
+            className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] mb-6 transition-colors group"
           >
             <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" /> Sessions
           </button>
@@ -633,13 +633,13 @@ export default function SessionDetailPage() {
   const costPerTurnAvg = session.totalTurns > 0 ? session.totalCostUsd / session.totalTurns : 0;
 
   return (
-    <div className={`min-h-screen bg-[#0a0a0a] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
+    <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
       <div className="max-w-7xl mx-auto">
 
         {/* Back button */}
         <button
           onClick={() => router.push('/sessions')}
-          className="inline-flex items-center gap-1.5 text-sm text-[#737373] hover:text-[#ededed] mb-6 transition-colors group"
+          className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] mb-6 transition-colors group"
         >
           <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
           <span className="group-hover:underline underline-offset-4">Sessions</span>
@@ -647,7 +647,7 @@ export default function SessionDetailPage() {
 
         {/* Header section */}
         <div className="mb-8">
-          <h1 className="text-2xl font-semibold text-[#ededed] mb-3">
+          <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-3">
             {sessionTitle(session)}
           </h1>
           <div className="flex flex-wrap items-center gap-3">
@@ -657,19 +657,19 @@ export default function SessionDetailPage() {
               {intent}
             </span>
             {/* Model */}
-            <span className="text-xs text-[#737373] bg-[#1a1a1a] border border-[#262626] px-2.5 py-1 rounded-full">
+            <span className="text-xs text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-primary)] px-2.5 py-1 rounded-full">
               {session.model ?? 'Unknown'}
             </span>
             {/* Turns */}
-            <span className="text-xs text-[#737373] flex items-center gap-1">
+            <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">
               <Hash className="w-3 h-3" /> {session.totalTurns} turns
             </span>
             {/* Cost */}
-            <span className="text-xs text-[#737373] flex items-center gap-1">
+            <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">
               <Coins className="w-3 h-3" /> {formatCost(session.totalCostUsd)}
             </span>
             {/* Duration */}
-            <span className="text-xs text-[#737373] flex items-center gap-1">
+            <span className="text-xs text-[var(--text-muted)] flex items-center gap-1">
               <Clock className="w-3 h-3" /> {formatDuration(session.startedAt, session.endedAt)}
             </span>
           </div>
@@ -681,15 +681,15 @@ export default function SessionDetailPage() {
           {/* LEFT: Turn Timeline */}
           <div className="flex-1 lg:w-[60%] min-w-0">
             <div className="flex items-center gap-3 mb-4">
-              <h2 className="text-lg font-medium text-[#ededed]">Turn Timeline</h2>
-              <span className="text-xs font-medium text-[#737373] bg-[#1a1a1a] border border-[#262626] px-2 py-0.5 rounded-full">
+              <h2 className="text-lg font-medium text-[var(--text-primary)]">Turn Timeline</h2>
+              <span className="text-xs font-medium text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-primary)] px-2 py-0.5 rounded-full">
                 {turns.length}
               </span>
             </div>
             {turns.length === 0 ? (
-              <div className="bg-[#141414] border border-[#262626] rounded-xl p-12 text-center">
-                <Info className="w-8 h-8 text-[#404040] mx-auto mb-3" />
-                <p className="text-sm text-[#737373]">No turns recorded.</p>
+              <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-12 text-center">
+                <Info className="w-8 h-8 text-[var(--text-muted)] mx-auto mb-3" />
+                <p className="text-sm text-[var(--text-muted)]">No turns recorded.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -708,50 +708,50 @@ export default function SessionDetailPage() {
 
           {/* RIGHT: Session Metrics */}
           <div className="lg:w-[40%] space-y-4">
-            <h2 className="text-lg font-medium text-[#ededed] mb-2">Session Metrics</h2>
+            <h2 className="text-lg font-medium text-[var(--text-primary)] mb-2">Session Metrics</h2>
 
             {/* Efficiency score ring */}
-            <div className="bg-[#141414] border border-[#262626] rounded-xl p-6 flex flex-col items-center">
-              <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4">Efficiency Score</p>
+            <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-6 flex flex-col items-center">
+              <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-4">Efficiency Score</p>
               <ScoreRing score={session.efficiencyScore} size={140} />
             </div>
 
             {/* Stat grid */}
-            <div className="bg-[#141414] border border-[#262626] rounded-xl p-5 grid grid-cols-2 gap-4">
+            <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-5 grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium flex items-center gap-1.5">
                   <Coins className="w-3 h-3" /> Total Cost
                 </p>
-                <p className="text-xl font-semibold text-[#ededed] font-mono">{formatCost(session.totalCostUsd)}</p>
+                <p className="text-xl font-semibold text-[var(--text-primary)] font-mono">{formatCost(session.totalCostUsd)}</p>
               </div>
               <div className="space-y-1">
-                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium flex items-center gap-1.5">
                   <Clock className="w-3 h-3" /> Duration
                 </p>
-                <p className="text-xl font-semibold text-[#ededed]">{formatDuration(session.startedAt, session.endedAt)}</p>
+                <p className="text-xl font-semibold text-[var(--text-primary)]">{formatDuration(session.startedAt, session.endedAt)}</p>
               </div>
               <div className="space-y-1">
-                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium flex items-center gap-1.5">
                   <Hash className="w-3 h-3" /> Turns
                 </p>
-                <p className="text-xl font-semibold text-[#ededed]">{session.totalTurns}</p>
+                <p className="text-xl font-semibold text-[var(--text-primary)]">{session.totalTurns}</p>
               </div>
               <div className="space-y-1">
-                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+                <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium flex items-center gap-1.5">
                   <Wrench className="w-3 h-3" /> Tool Calls
                 </p>
-                <p className="text-xl font-semibold text-[#ededed]">{session.totalToolCalls}</p>
+                <p className="text-xl font-semibold text-[var(--text-primary)]">{session.totalToolCalls}</p>
               </div>
-              <div className="space-y-1 col-span-2 pt-2 border-t border-[#1a1a1a]">
-                <p className="text-[10px] text-[#737373] uppercase tracking-wider font-medium flex items-center gap-1.5">
+              <div className="space-y-1 col-span-2 pt-2 border-t border-[var(--bg-elevated)]">
+                <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium flex items-center gap-1.5">
                   <Zap className="w-3 h-3" /> Cost per Turn (avg)
                 </p>
-                <p className="text-xl font-semibold text-[#ededed] font-mono">{formatCostPrecise(costPerTurnAvg)}</p>
+                <p className="text-xl font-semibold text-[var(--text-primary)] font-mono">{formatCostPrecise(costPerTurnAvg)}</p>
               </div>
             </div>
 
             {/* Progress bars */}
-            <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
+            <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-5">
               <PercentBar
                 label="Token Waste Ratio"
                 value={session.tokenWasteRatio !== null ? session.tokenWasteRatio * 100 : null}
@@ -766,21 +766,21 @@ export default function SessionDetailPage() {
 
             {/* Cost per turn chart */}
             {costPerTurn.length > 1 && (
-              <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
-                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
+              <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-5">
+                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
                   <TrendingUp className="w-3.5 h-3.5" /> Cost per Turn
                 </p>
                 <ResponsiveContainer width="100%" height={160}>
                   <BarChart data={costPerTurn}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                    <XAxis dataKey="turn" tick={{ fill: '#737373', fontSize: 10 }} axisLine={{ stroke: '#262626' }} tickLine={false} />
-                    <YAxis tick={{ fill: '#737373', fontSize: 10 }} axisLine={{ stroke: '#262626' }} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--bg-elevated)" />
+                    <XAxis dataKey="turn" tick={{ fill: 'var(--text-muted)', fontSize: 10 }} axisLine={{ stroke: 'var(--border-primary)' }} tickLine={false} />
+                    <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 10 }} axisLine={{ stroke: 'var(--border-primary)' }} tickLine={false} />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: '#141414',
-                        border: '1px solid #262626',
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--border-primary)',
                         borderRadius: 8,
-                        color: '#ededed',
+                        color: 'var(--text-primary)',
                         fontSize: 12,
                         boxShadow: '0 10px 15px rgba(0,0,0,0.3)',
                       }}
@@ -794,27 +794,27 @@ export default function SessionDetailPage() {
 
             {/* Context usage per turn */}
             {contextPerTurn.length > 1 && (
-              <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
-                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
+              <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-5">
+                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5" /> Context Usage per Turn
                 </p>
                 <ResponsiveContainer width="100%" height={160}>
                   <LineChart data={contextPerTurn}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                    <XAxis dataKey="turn" tick={{ fill: '#737373', fontSize: 10 }} axisLine={{ stroke: '#262626' }} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--bg-elevated)" />
+                    <XAxis dataKey="turn" tick={{ fill: 'var(--text-muted)', fontSize: 10 }} axisLine={{ stroke: 'var(--border-primary)' }} tickLine={false} />
                     <YAxis
-                      tick={{ fill: '#737373', fontSize: 10 }}
+                      tick={{ fill: 'var(--text-muted)', fontSize: 10 }}
                       domain={[0, 100]}
                       unit="%"
-                      axisLine={{ stroke: '#262626' }}
+                      axisLine={{ stroke: 'var(--border-primary)' }}
                       tickLine={false}
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: '#141414',
-                        border: '1px solid #262626',
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--border-primary)',
                         borderRadius: 8,
-                        color: '#ededed',
+                        color: 'var(--text-primary)',
                         fontSize: 12,
                         boxShadow: '0 10px 15px rgba(0,0,0,0.3)',
                       }}
@@ -835,21 +835,21 @@ export default function SessionDetailPage() {
 
             {/* Model recommendations */}
             {analysis?.modelRecommendations && analysis.modelRecommendations.length > 0 && (
-              <div className="bg-[#141414] border border-[#262626] rounded-xl p-5">
-                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
+              <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-5">
+                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-4 flex items-center gap-1.5">
                   <Gauge className="w-3.5 h-3.5" /> Model Recommendations
                 </p>
                 <div className="space-y-2">
                   {analysis.modelRecommendations.map((rec, i) => (
                     <div
                       key={i}
-                      className="text-xs bg-[#0a0a0a] border border-[#262626] rounded-lg p-3 flex items-center justify-between"
+                      className="text-xs bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-lg p-3 flex items-center justify-between"
                     >
-                      <span className="text-[#a3a3a3]">
+                      <span className="text-[var(--text-secondary)]">
                         Turn {rec.turn}:
-                        <span className="text-[#737373] mx-1">{rec.used}</span>
-                        <ChevronRight className="w-3 h-3 inline text-[#737373]" />
-                        <span className="text-[#ededed] ml-1 font-medium">{rec.recommended}</span>
+                        <span className="text-[var(--text-muted)] mx-1">{rec.used}</span>
+                        <ChevronRight className="w-3 h-3 inline text-[var(--text-muted)]" />
+                        <span className="text-[var(--text-primary)] ml-1 font-medium">{rec.recommended}</span>
                       </span>
                       <span className="text-emerald-400 font-medium">save {formatCost(rec.savingsUsd)}</span>
                     </div>
@@ -861,8 +861,8 @@ export default function SessionDetailPage() {
         </div>
 
         {/* Bottom: Session Analysis */}
-        <div className="bg-[#141414] border border-[#262626] rounded-xl p-6">
-          <h2 className="text-lg font-medium text-[#ededed] mb-5 flex items-center gap-2.5">
+        <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-xl p-6">
+          <h2 className="text-lg font-medium text-[var(--text-primary)] mb-5 flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-purple-900/30 flex items-center justify-center">
               <Sparkles className="w-4 h-4 text-purple-400" />
             </div>
@@ -871,20 +871,20 @@ export default function SessionDetailPage() {
           {analysis ? (
             <div className="space-y-5">
               <div>
-                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Summary</p>
-                <p className="text-sm text-[#ededed] leading-relaxed">{analysis.summary}</p>
+                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-2">Summary</p>
+                <p className="text-sm text-[var(--text-primary)] leading-relaxed">{analysis.summary}</p>
               </div>
               <div>
-                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Top Tip</p>
+                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-2">Top Tip</p>
                 <div className="bg-yellow-900/10 border border-yellow-800/30 rounded-lg p-4 flex items-start gap-3">
                   <Lightbulb className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
                   <p className="text-sm text-yellow-300/90 leading-relaxed">{analysis.topTip}</p>
                 </div>
               </div>
               <div>
-                <p className="text-xs text-[#737373] uppercase tracking-wider font-medium mb-2">Rewritten First Prompt</p>
-                <div className="bg-[#0a0a0a] border border-[#262626] rounded-lg p-4">
-                  <p className="text-sm text-[#ededed] italic leading-relaxed">
+                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium mb-2">Rewritten First Prompt</p>
+                <div className="bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-lg p-4">
+                  <p className="text-sm text-[var(--text-primary)] italic leading-relaxed">
                     {analysis.rewrittenFirstPrompt}
                   </p>
                 </div>

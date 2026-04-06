@@ -63,7 +63,7 @@ function formatDuration(start: string, end: string | null): string {
 }
 
 function scoreColor(score: number | null): string {
-  if (score === null) return 'text-[#737373]';
+  if (score === null) return 'text-[var(--text-muted)]';
   if (score >= 80) return 'text-emerald-400';
   if (score >= 60) return 'text-blue-400';
   if (score >= 40) return 'text-yellow-400';
@@ -71,7 +71,7 @@ function scoreColor(score: number | null): string {
 }
 
 function scoreBgDot(score: number | null): string {
-  if (score === null) return 'bg-[#737373]';
+  if (score === null) return 'bg-[var(--text-muted)]';
   if (score >= 80) return 'bg-emerald-400';
   if (score >= 60) return 'bg-blue-400';
   if (score >= 40) return 'bg-yellow-400';
@@ -158,13 +158,13 @@ function SkeletonRow() {
   return (
     <div className="flex items-center gap-4 px-5 py-4 animate-pulse">
       <div className="flex-1 space-y-2">
-        <div className="h-4 bg-[#1a1a1a] rounded w-3/4" />
-        <div className="h-3 bg-[#1a1a1a] rounded w-1/2" />
+        <div className="h-4 bg-[var(--bg-elevated)] rounded w-3/4" />
+        <div className="h-3 bg-[var(--bg-elevated)] rounded w-1/2" />
       </div>
-      <div className="h-4 bg-[#1a1a1a] rounded w-16" />
-      <div className="h-4 bg-[#1a1a1a] rounded w-12" />
-      <div className="h-4 bg-[#1a1a1a] rounded w-14" />
-      <div className="h-4 bg-[#1a1a1a] rounded w-10" />
+      <div className="h-4 bg-[var(--bg-elevated)] rounded w-16" />
+      <div className="h-4 bg-[var(--bg-elevated)] rounded w-12" />
+      <div className="h-4 bg-[var(--bg-elevated)] rounded w-14" />
+      <div className="h-4 bg-[var(--bg-elevated)] rounded w-10" />
     </div>
   );
 }
@@ -189,7 +189,7 @@ function FilterPill({
         px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap
         ${active
           ? `${color ?? 'bg-[#8b5cf6]/20 text-[#8b5cf6]'} ring-1 ring-[#8b5cf6]/40`
-          : 'bg-[#141414] text-[#737373] hover:text-[#a3a3a3] hover:bg-[#1a1a1a] border border-[#262626]'
+          : 'bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-primary)]'
         }
       `}
     >
@@ -314,14 +314,14 @@ export default function SessionsPage() {
   // ---------- Loading skeleton ----------
   if (loading) {
     return (
-      <div className={`min-h-screen bg-[#0a0a0a] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
+      <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center gap-3 mb-8">
-            <div className="h-8 w-32 bg-[#1a1a1a] rounded animate-pulse" />
-            <div className="h-6 w-12 bg-[#1a1a1a] rounded-full animate-pulse" />
+            <div className="h-8 w-32 bg-[var(--bg-elevated)] rounded animate-pulse" />
+            <div className="h-6 w-12 bg-[var(--bg-elevated)] rounded-full animate-pulse" />
           </div>
-          <div className="h-10 w-full bg-[#1a1a1a] rounded-lg mb-4 animate-pulse" />
-          <div className="rounded-xl border border-[#262626] overflow-hidden bg-[#111111]">
+          <div className="h-10 w-full bg-[var(--bg-elevated)] rounded-lg mb-4 animate-pulse" />
+          <div className="rounded-xl border border-[var(--border-primary)] overflow-hidden bg-[var(--bg-secondary)]">
             {Array.from({ length: 8 }).map((_, i) => (
               <SkeletonRow key={i} />
             ))}
@@ -334,9 +334,9 @@ export default function SessionsPage() {
   // ---------- Error ----------
   if (error) {
     return (
-      <div className={`min-h-screen bg-[#0a0a0a] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
+      <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-semibold text-[#ededed] mb-6">Sessions</h1>
+          <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-6">Sessions</h1>
           <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-5 text-red-300 flex items-start gap-3">
             <div className="w-2 h-2 rounded-full bg-red-400 mt-2 shrink-0" />
             <div>
@@ -352,15 +352,15 @@ export default function SessionsPage() {
   // ---------- Empty state ----------
   if (sessions.length === 0 && offset === 0) {
     return (
-      <div className={`min-h-screen bg-[#0a0a0a] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
+      <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-semibold text-[#ededed] mb-8">Sessions</h1>
+          <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-8">Sessions</h1>
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-20 h-20 rounded-2xl bg-[#141414] border border-[#262626] flex items-center justify-center mb-6">
-              <FileQuestion className="w-10 h-10 text-[#404040]" />
+            <div className="w-20 h-20 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-primary)] flex items-center justify-center mb-6">
+              <FileQuestion className="w-10 h-10 text-[var(--text-muted)]" />
             </div>
-            <h3 className="text-lg font-medium text-[#ededed] mb-2">No sessions yet</h3>
-            <p className="text-[#737373] text-sm max-w-sm leading-relaxed">
+            <h3 className="text-lg font-medium text-[var(--text-primary)] mb-2">No sessions yet</h3>
+            <p className="text-[var(--text-muted)] text-sm max-w-sm leading-relaxed">
               Use Claude Code with EvaluateAI hooks installed to start tracking your AI coding sessions.
             </p>
           </div>
@@ -370,25 +370,25 @@ export default function SessionsPage() {
   }
 
   return (
-    <div className={`min-h-screen bg-[#0a0a0a] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
+    <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
       <div className="max-w-7xl mx-auto">
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold text-[#ededed]">Sessions</h1>
-            <span className="text-xs font-medium text-[#737373] bg-[#1a1a1a] border border-[#262626] px-2.5 py-1 rounded-full">
+            <h1 className="text-2xl font-semibold text-[var(--text-primary)]">Sessions</h1>
+            <span className="text-xs font-medium text-[var(--text-muted)] bg-[var(--bg-elevated)] border border-[var(--border-primary)] px-2.5 py-1 rounded-full">
               {total}
             </span>
           </div>
           <div className="relative w-full sm:w-80">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#737373]" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
             <input
               type="text"
               placeholder="Search prompts..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-[#0a0a0a] border border-[#262626] rounded-xl pl-10 pr-4 py-2.5 text-sm text-[#ededed] placeholder-[#737373] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]/40 focus:border-[#8b5cf6]/50 transition-all duration-200"
+              className="w-full bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-xl pl-10 pr-4 py-2.5 text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8b5cf6]/40 focus:border-[#8b5cf6]/50 transition-all duration-200"
             />
           </div>
         </div>
@@ -397,7 +397,7 @@ export default function SessionsPage() {
         <div className="space-y-3 mb-6">
           {/* Date filters */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-[#737373] font-medium w-12 shrink-0">Date</span>
+            <span className="text-xs text-[var(--text-muted)] font-medium w-12 shrink-0">Date</span>
             {([['all', 'All'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month']] as const).map(([val, lbl]) => (
               <FilterPill key={val} label={lbl} active={dateFilter === val} onClick={() => setDateFilter(val)} />
             ))}
@@ -405,7 +405,7 @@ export default function SessionsPage() {
 
           {/* Intent filters */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-[#737373] font-medium w-12 shrink-0">Intent</span>
+            <span className="text-xs text-[var(--text-muted)] font-medium w-12 shrink-0">Intent</span>
             <FilterPill label="All" active={intentFilter === 'all'} onClick={() => setIntentFilter('all')} />
             {(['research', 'debug', 'feature', 'refactor', 'review', 'generate', 'config'] as const).map(intent => {
               const style = INTENT_STYLES[intent];
@@ -423,7 +423,7 @@ export default function SessionsPage() {
 
           {/* Score filters */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-[#737373] font-medium w-12 shrink-0">Score</span>
+            <span className="text-xs text-[var(--text-muted)] font-medium w-12 shrink-0">Score</span>
             {([['all', 'All', ''], ['excellent', 'Excellent', 'bg-emerald-900/20 text-emerald-400'], ['good', 'Good', 'bg-blue-900/20 text-blue-400'], ['needs_work', 'Needs Work', 'bg-yellow-900/20 text-yellow-400'], ['poor', 'Poor', 'bg-red-900/20 text-red-400']] as const).map(([val, lbl, clr]) => (
               <FilterPill key={val} label={lbl} active={scoreFilter === val} onClick={() => setScoreFilter(val)} color={scoreFilter === val && clr ? clr : undefined} />
             ))}
@@ -431,7 +431,7 @@ export default function SessionsPage() {
 
           {/* Model filters */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-[#737373] font-medium w-12 shrink-0">Model</span>
+            <span className="text-xs text-[var(--text-muted)] font-medium w-12 shrink-0">Model</span>
             {([['all', 'All'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']] as const).map(([val, lbl]) => (
               <FilterPill key={val} label={lbl} active={modelFilter === val} onClick={() => setModelFilter(val)} />
             ))}
@@ -448,13 +448,13 @@ export default function SessionsPage() {
         </div>
 
         {/* Session Table */}
-        <div className="rounded-xl border border-[#262626] overflow-hidden bg-[#111111]">
+        <div className="rounded-xl border border-[var(--border-primary)] overflow-hidden bg-[var(--bg-secondary)]">
           {/* Table Header */}
-          <div className="flex items-center gap-0 px-5 py-3 bg-[#0a0a0a] border-b border-[#262626]">
+          <div className="flex items-center gap-0 px-5 py-3 bg-[var(--bg-primary)] border-b border-[var(--border-primary)]">
             {columns.map((col) => (
               <div
                 key={col.key}
-                className={`${col.width} px-2 text-xs font-medium text-[#737373] cursor-pointer select-none hover:text-[#a3a3a3] transition-colors ${col.align ?? 'text-left'}`}
+                className={`${col.width} px-2 text-xs font-medium text-[var(--text-muted)] cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors ${col.align ?? 'text-left'}`}
                 onClick={() => toggleSort(col.key)}
               >
                 <span className="inline-flex items-center gap-1.5">
@@ -469,7 +469,7 @@ export default function SessionsPage() {
           </div>
 
           {/* Rows */}
-          <div className="divide-y divide-[#1a1a1a]">
+          <div className="divide-y divide-[var(--bg-elevated)]">
             {filtered.map((session, idx) => {
               const intent = guessIntent(session);
               const intentStyle = INTENT_STYLES[intent] ?? INTENT_STYLES.research;
@@ -479,12 +479,12 @@ export default function SessionsPage() {
                 <div
                   key={session.id}
                   onClick={() => router.push(`/sessions/${session.id}`)}
-                  className="flex items-center gap-0 px-5 py-3.5 cursor-pointer bg-[#111111] hover:bg-[#161616] hover:shadow-[0_0_0_1px_rgba(139,92,246,0.1)] transition-all duration-200 group"
+                  className="flex items-center gap-0 px-5 py-3.5 cursor-pointer bg-[var(--bg-secondary)] hover:bg-[#161616] hover:shadow-[0_0_0_1px_rgba(139,92,246,0.1)] transition-all duration-200 group"
                   style={{ animationDelay: `${idx * 30}ms` }}
                 >
                   {/* Task */}
                   <div className="flex-1 min-w-[200px] px-2">
-                    <p className="text-sm text-[#ededed] group-hover:text-white transition-colors truncate">
+                    <p className="text-sm text-[var(--text-primary)] group-hover:text-white transition-colors truncate">
                       {taskLabel(session)}
                     </p>
                     {/* Intent badge inline */}
@@ -495,7 +495,7 @@ export default function SessionsPage() {
                   </div>
 
                   {/* Date */}
-                  <div className="w-32 px-2 text-xs text-[#737373]">
+                  <div className="w-32 px-2 text-xs text-[var(--text-muted)]">
                     {new Date(session.startedAt).toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',
@@ -515,24 +515,24 @@ export default function SessionsPage() {
                   </div>
 
                   {/* Turns */}
-                  <div className="w-16 px-2 text-center text-sm text-[#a3a3a3]">
+                  <div className="w-16 px-2 text-center text-sm text-[var(--text-secondary)]">
                     {session.totalTurns}
                   </div>
 
                   {/* Cost */}
-                  <div className="w-20 px-2 text-right text-sm text-[#a3a3a3] font-mono">
+                  <div className="w-20 px-2 text-right text-sm text-[var(--text-secondary)] font-mono">
                     {formatCost(session.totalCostUsd)}
                   </div>
 
                   {/* Model */}
                   <div className="w-20 px-2">
-                    <span className="text-xs text-[#737373] bg-[#1a1a1a] px-2 py-0.5 rounded">
+                    <span className="text-xs text-[var(--text-muted)] bg-[var(--bg-elevated)] px-2 py-0.5 rounded">
                       {model}
                     </span>
                   </div>
 
                   {/* Duration */}
-                  <div className="w-16 px-2 text-right text-xs text-[#737373]">
+                  <div className="w-16 px-2 text-right text-xs text-[var(--text-muted)]">
                     {formatDuration(session.startedAt, session.endedAt)}
                   </div>
                 </div>
@@ -542,8 +542,8 @@ export default function SessionsPage() {
             {/* No match */}
             {filtered.length === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-center">
-                <FileQuestion className="w-10 h-10 text-[#404040] mb-3" />
-                <p className="text-sm text-[#737373]">No sessions match your filters.</p>
+                <FileQuestion className="w-10 h-10 text-[var(--text-muted)] mb-3" />
+                <p className="text-sm text-[var(--text-muted)]">No sessions match your filters.</p>
                 {activeFilters > 0 && (
                   <button
                     onClick={() => { setDateFilter('all'); setIntentFilter('all'); setScoreFilter('all'); setModelFilter('all'); setSearch(''); }}
@@ -559,24 +559,24 @@ export default function SessionsPage() {
 
         {/* Pagination */}
         <div className="flex items-center justify-between mt-5">
-          <p className="text-sm text-[#737373]">
-            Showing <span className="text-[#a3a3a3] font-medium">{offset + 1}--{Math.min(offset + PAGE_SIZE, total)}</span> of <span className="text-[#a3a3a3] font-medium">{total}</span>
+          <p className="text-sm text-[var(--text-muted)]">
+            Showing <span className="text-[var(--text-secondary)] font-medium">{offset + 1}--{Math.min(offset + PAGE_SIZE, total)}</span> of <span className="text-[var(--text-secondary)] font-medium">{total}</span>
           </p>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
               disabled={offset === 0}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-[#141414] border border-[#262626] text-[#ededed] hover:bg-[#1a1a1a] hover:border-[#404040] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-[var(--bg-card)] border border-[var(--border-primary)] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] hover:border-[var(--border-hover)] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
             >
               <ChevronLeft className="w-4 h-4" /> Previous
             </button>
-            <span className="text-xs text-[#737373] px-2">
+            <span className="text-xs text-[var(--text-muted)] px-2">
               {Math.floor(offset / PAGE_SIZE) + 1} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}
             </span>
             <button
               onClick={() => setOffset((o) => o + PAGE_SIZE)}
               disabled={offset + PAGE_SIZE >= total}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-[#141414] border border-[#262626] text-[#ededed] hover:bg-[#1a1a1a] hover:border-[#404040] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-[var(--bg-card)] border border-[var(--border-primary)] text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] hover:border-[var(--border-hover)] disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200"
             >
               Next <ChevronRight className="w-4 h-4" />
             </button>

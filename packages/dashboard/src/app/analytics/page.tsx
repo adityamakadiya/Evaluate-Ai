@@ -59,10 +59,10 @@ const PIE_COLORS = [
 ];
 
 const CHART_TOOLTIP_STYLE = {
-  backgroundColor: '#141414',
-  border: '1px solid #262626',
+  backgroundColor: 'var(--bg-card)',
+  border: '1px solid var(--border-primary)',
   borderRadius: 8,
-  color: '#ededed',
+  color: 'var(--text-primary)',
   fontSize: 12,
 };
 
@@ -84,7 +84,7 @@ function StatCard({
   accent: string;
 }) {
   return (
-    <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-all group">
+    <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-all group">
       <div className="flex items-center justify-between mb-3">
         <div
           className="w-10 h-10 rounded-lg flex items-center justify-center"
@@ -93,8 +93,8 @@ function StatCard({
           {icon}
         </div>
       </div>
-      <p className="text-2xl font-bold text-[#ededed] mb-1">{value}</p>
-      <p className="text-xs text-[#525252] font-medium uppercase tracking-wider">{label}</p>
+      <p className="text-2xl font-bold text-[var(--text-primary)] mb-1">{value}</p>
+      <p className="text-xs text-[var(--text-muted)] font-medium uppercase tracking-wider">{label}</p>
     </div>
   );
 }
@@ -107,8 +107,8 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-[#141414] border border-[#262626] rounded-lg p-5 hover:border-[#333] transition-colors">
-      <h3 className="text-sm font-semibold text-[#a3a3a3] mb-4 uppercase tracking-wider">{title}</h3>
+    <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-colors">
+      <h3 className="text-sm font-semibold text-[var(--text-secondary)] mb-4 uppercase tracking-wider">{title}</h3>
       {children}
     </div>
   );
@@ -117,8 +117,8 @@ function ChartCard({
 function ChartSkeleton() {
   return (
     <div className="animate-pulse">
-      <div className="h-4 bg-[#1a1a1a] rounded w-32 mb-4" />
-      <div className="h-[280px] bg-[#0a0a0a] rounded-lg" />
+      <div className="h-4 bg-[var(--bg-elevated)] rounded w-32 mb-4" />
+      <div className="h-[280px] bg-[var(--bg-primary)] rounded-lg" />
     </div>
   );
 }
@@ -202,28 +202,28 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8">
+      <div className="min-h-screen bg-[var(--bg-primary)] p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
           <div className="flex items-center justify-between mb-8">
             <div className="animate-pulse">
-              <div className="h-8 bg-[#1a1a1a] rounded w-36 mb-2" />
-              <div className="h-4 bg-[#1a1a1a] rounded w-56" />
+              <div className="h-8 bg-[var(--bg-elevated)] rounded w-36 mb-2" />
+              <div className="h-4 bg-[var(--bg-elevated)] rounded w-56" />
             </div>
           </div>
           {/* Stat skeletons */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="bg-[#141414] border border-[#262626] rounded-lg p-5 animate-pulse">
-                <div className="w-10 h-10 bg-[#1a1a1a] rounded-lg mb-3" />
-                <div className="h-6 bg-[#1a1a1a] rounded w-24 mb-2" />
-                <div className="h-3 bg-[#1a1a1a] rounded w-32" />
+              <div key={i} className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5 animate-pulse">
+                <div className="w-10 h-10 bg-[var(--bg-elevated)] rounded-lg mb-3" />
+                <div className="h-6 bg-[var(--bg-elevated)] rounded w-24 mb-2" />
+                <div className="h-3 bg-[var(--bg-elevated)] rounded w-32" />
               </div>
             ))}
           </div>
           {/* Chart skeletons */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="bg-[#141414] border border-[#262626] rounded-lg p-5">
+              <div key={i} className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5">
                 <ChartSkeleton />
               </div>
             ))}
@@ -235,9 +235,9 @@ export default function AnalyticsPage() {
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8">
+      <div className="min-h-screen bg-[var(--bg-primary)] p-6 lg:p-8">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold text-[#ededed] mb-4">Analytics</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)] mb-4">Analytics</h1>
           <div className="bg-red-900/20 border border-red-800/50 rounded-lg p-5 text-red-300 text-sm">
             Failed to load analytics: {error ?? 'Unknown error'}
           </div>
@@ -258,17 +258,17 @@ export default function AnalyticsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] p-6 lg:p-8">
+    <div className="min-h-screen bg-[var(--bg-primary)] p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-[#ededed] tracking-tight">Analytics</h1>
-            <p className="text-sm text-[#525252] mt-1">Track your AI usage patterns and efficiency</p>
+            <h1 className="text-2xl font-bold text-[var(--text-primary)] tracking-tight">Analytics</h1>
+            <p className="text-sm text-[var(--text-muted)] mt-1">Track your AI usage patterns and efficiency</p>
           </div>
 
           {/* Period selector pills */}
-          <div className="flex items-center bg-[#111111] border border-[#262626] rounded-lg p-1">
+          <div className="flex items-center bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded-lg p-1">
             {(['today', 'week', 'month', 'quarter'] as Period[]).map((p) => (
               <button
                 key={p}
@@ -276,7 +276,7 @@ export default function AnalyticsPage() {
                 className={`px-4 py-1.5 text-xs font-semibold rounded-md transition-all capitalize ${
                   period === p
                     ? 'bg-purple-600 text-white shadow-sm shadow-purple-900/30'
-                    : 'text-[#525252] hover:text-[#a3a3a3]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
                 }`}
               >
                 {p}
@@ -312,13 +312,13 @@ export default function AnalyticsPage() {
           <ChartCard title="Cost by Day">
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={costByDay}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--bg-elevated)" />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: '#525252', fontSize: 11 }}
+                  tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
                   tickFormatter={(v: string) => v.slice(3)}
                 />
-                <YAxis tick={{ fill: '#525252', fontSize: 11 }} />
+                <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(value: number) => [formatCost(value), 'Cost']}
@@ -331,9 +331,9 @@ export default function AnalyticsPage() {
           <ChartCard title="Score Distribution">
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={scoreDistribution}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                <XAxis dataKey="bucket" tick={{ fill: '#525252', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#525252', fontSize: 11 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--bg-elevated)" />
+                <XAxis dataKey="bucket" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
+                <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(value: number) => [value, 'Sessions']}
@@ -365,7 +365,7 @@ export default function AnalyticsPage() {
                   label={({ model, percent }: { model: string; percent: number }) =>
                     `${model} ${(percent * 100).toFixed(0)}%`
                   }
-                  labelLine={{ stroke: '#404040' }}
+                  labelLine={{ stroke: 'var(--border-hover)' }}
                 >
                   {modelUsage.map((_, i) => (
                     <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
@@ -382,12 +382,12 @@ export default function AnalyticsPage() {
           <ChartCard title="Anti-Pattern Ranking">
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={antiPatternRanking} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
-                <XAxis type="number" tick={{ fill: '#525252', fontSize: 11 }} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--bg-elevated)" />
+                <XAxis type="number" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
                 <YAxis
                   type="category"
                   dataKey="pattern"
-                  tick={{ fill: '#737373', fontSize: 11 }}
+                  tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
                   width={120}
                 />
                 <Tooltip
@@ -405,13 +405,13 @@ export default function AnalyticsPage() {
           <ChartCard title="Efficiency Trend">
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={efficiencyTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--bg-elevated)" />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: '#525252', fontSize: 11 }}
+                  tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
                   tickFormatter={(v: string) => v.slice(3)}
                 />
-                <YAxis tick={{ fill: '#525252', fontSize: 11 }} domain={[0, 100]} />
+                <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} domain={[0, 100]} />
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
                   formatter={(value: number) => [`${Math.round(value)}/100`, 'Efficiency']}
@@ -422,7 +422,7 @@ export default function AnalyticsPage() {
                   stroke="#8b5cf6"
                   strokeWidth={2.5}
                   dot={{ fill: '#8b5cf6', r: 3, strokeWidth: 0 }}
-                  activeDot={{ fill: '#8b5cf6', r: 5, strokeWidth: 2, stroke: '#141414' }}
+                  activeDot={{ fill: '#8b5cf6', r: 5, strokeWidth: 2, stroke: 'var(--bg-card)' }}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -442,7 +442,7 @@ export default function AnalyticsPage() {
                   label={({ intent, percent }: { intent: string; percent: number }) =>
                     `${intent} ${(percent * 100).toFixed(0)}%`
                   }
-                  labelLine={{ stroke: '#404040' }}
+                  labelLine={{ stroke: 'var(--border-hover)' }}
                 >
                   {intentDistribution.map((entry) => (
                     <Cell
