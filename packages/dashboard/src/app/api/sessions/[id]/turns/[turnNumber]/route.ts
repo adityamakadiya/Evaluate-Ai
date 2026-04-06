@@ -82,12 +82,36 @@ function findTranscriptFile(sessionId: string): string | null {
   if (!existsSync(claudeProjectsDir)) return null;
 
   try {
+    // Search all project directories for the session transcript
     const projectDirs = readdirSync(claudeProjectsDir, { withFileTypes: true });
     for (const dir of projectDirs) {
       if (!dir.isDirectory()) continue;
-      const candidate = join(claudeProjectsDir, dir.name, `${sessionId}.jsonl`);
+      const dirPath = join(claudeProjectsDir, dir.name);
+
+      // Check direct match: <project-dir>/<session-id>.jsonl
+      const candidate = join(dirPath, `${sessionId}.jsonl`);
       if (existsSync(candidate)) return candidate;
+
+      // Also check subdirectories (some projects nest deeper)
+      try {
+        const subEntries = readdirSync(dirPath, { withFileTypes: true });
+        for (const sub of subEntries) {
+          if (sub.isFile() && sub.name === `${sessionId}.jsonl`) {
+            return join(dirPath, sub.name);
+          }
+        }
+      } catch { /* skip unreadable dirs */ }
     }
+  } catch { /* ignore */ }
+
+  // Fallback: try globbing with find-like approach
+  try {
+    const { execSync } = require('node:child_process');
+    const result = execSync(
+      `find "${claudeProjectsDir}" -name "${sessionId}.jsonl" -maxdepth 3 2>/dev/null | head -1`,
+      { encoding: 'utf-8', timeout: 2000 }
+    ).trim();
+    if (result && existsSync(result)) return result;
   } catch { /* ignore */ }
 
   return null;
@@ -106,18 +130,28 @@ function parseTranscriptForTurn(transcriptPath: string, turnNumber: number): {
     let userTurnCount = 0;
     let targetAssistantIndex = -1;
 
-    // Walk through entries: count user messages to find the Nth turn, then grab the assistant response after it
-    const entries: TranscriptEntry[] = [];
+    // Walk through entries: count user PROMPT messages (not tool_result) to find the Nth turn
+    const entries: Array<{ message: TranscriptEntry['message'] }> = [];
     for (const line of lines) {
-      try { entries.push(JSON.parse(line)); } catch { continue; }
+      try {
+        const parsed = JSON.parse(line);
+        // Handle both { message: {...} } and direct { role: ... } formats
+        const msg = parsed.message ?? parsed;
+        if (msg.role) entries.push({ message: msg });
+      } catch { continue; }
     }
 
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.message.role === 'user') {
+        // Only count actual user prompts, not tool_result responses
+        const content = entry.message.content;
+        const isToolResult = Array.isArray(content) && content.length > 0 && content[0]?.type === 'tool_result';
+        if (isToolResult) continue;
+
         userTurnCount++;
         if (userTurnCount === turnNumber) {
-          // Find the next assistant message with usage data
+          // Find the next assistant message with usage data (may be several entries later due to tool calls)
           for (let j = i + 1; j < entries.length; j++) {
             if (entries[j].message.role === 'assistant' && entries[j].message.usage?.output_tokens) {
               targetAssistantIndex = j;
