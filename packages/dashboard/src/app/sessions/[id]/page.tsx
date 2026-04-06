@@ -130,6 +130,116 @@ function parseJsonSafe<T>(json: string | null, fallback: T): T {
   }
 }
 
+// --------------- Anti-pattern hints for heuristic analysis ---------------
+
+const ANTI_PATTERN_TIPS: Record<string, { label: string; tip: string }> = {
+  vague_verb: { label: 'Vague verb', tip: 'Add specific file paths, function names, and error messages' },
+  paraphrased_error: { label: 'Paraphrased error', tip: 'Paste the exact error message in backticks' },
+  too_short: { label: 'Too short', tip: 'Add context: file path, function name, expected behavior' },
+  retry_detected: { label: 'Retry detected', tip: 'Explain what was wrong with the prior answer instead of repeating' },
+  no_file_ref: { label: 'No file reference', tip: 'Include the file path and function name' },
+  multi_question: { label: 'Multiple questions', tip: 'Split into one question per turn for better results' },
+  overlong_prompt: { label: 'Overlong prompt', tip: 'Split into task description + separate context' },
+  no_expected_output: { label: 'No expected output', tip: 'Describe what success looks like' },
+  unanchored_ref: { label: 'Unanchored reference', tip: 'Re-state what "it" or "that" refers to' },
+  filler_words: { label: 'Filler words', tip: 'Remove "please", "could you" — saves tokens with no quality loss' },
+};
+
+function HeuristicAnalysis({ turns, session }: { turns: TurnData[]; session: SessionDetail }) {
+  // Gather all anti-patterns across turns
+  const patternCounts: Record<string, number> = {};
+  const retryCount = turns.filter(t => {
+    const ap = parseJsonSafe<string[]>(typeof t.antiPatterns === 'string' ? t.antiPatterns : JSON.stringify(t.antiPatterns), []);
+    if (Array.isArray(ap)) {
+      for (const p of ap) {
+        const id = typeof p === 'string' ? p : (p as { id?: string })?.id;
+        if (id) patternCounts[id] = (patternCounts[id] ?? 0) + 1;
+      }
+    }
+    return false;
+  }).length;
+
+  const sortedPatterns = Object.entries(patternCounts).sort((a, b) => b[1] - a[1]);
+  const scores = turns.map(t => t.heuristicScore ?? t.llmScore).filter((s): s is number => s !== null);
+  const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  const lowScoreTurns = turns.filter(t => (t.heuristicScore ?? 100) < 50);
+  const highScoreTurns = turns.filter(t => (t.heuristicScore ?? 0) >= 70);
+
+  // Generate summary
+  let summary = '';
+  if (turns.length === 0) {
+    summary = 'No turns recorded in this session.';
+  } else if (avgScore !== null && avgScore >= 70) {
+    summary = `Good session with an average score of ${avgScore}/100. ${highScoreTurns.length} of ${turns.length} prompts scored well.`;
+  } else if (avgScore !== null && avgScore >= 40) {
+    summary = `Mixed session with an average score of ${avgScore}/100. ${lowScoreTurns.length} of ${turns.length} prompts need improvement.`;
+  } else {
+    summary = `This session scored ${avgScore ?? 0}/100 on average. Most prompts lacked specificity or context.`;
+  }
+
+  // Top tip
+  const topPattern = sortedPatterns[0];
+  const topTip = topPattern
+    ? ANTI_PATTERN_TIPS[topPattern[0]]?.tip ?? 'Add more context to your prompts for better results.'
+    : highScoreTurns.length === turns.length
+      ? 'Great prompting! Keep including file paths and error messages.'
+      : 'Try including file paths, error messages, and expected behavior in your prompts.';
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div>
+        <p className="text-sm text-[#737373] mb-1">Summary</p>
+        <p className="text-sm text-[#ededed]">{summary}</p>
+      </div>
+
+      {/* Top Issues */}
+      {sortedPatterns.length > 0 && (
+        <div>
+          <p className="text-sm text-[#737373] mb-2">Issues Found</p>
+          <div className="space-y-2">
+            {sortedPatterns.slice(0, 5).map(([id, count]) => {
+              const info = ANTI_PATTERN_TIPS[id];
+              return (
+                <div key={id} className="bg-[#1a1a1a] border border-[#262626] rounded-md p-3 flex items-start justify-between gap-3">
+                  <div>
+                    <span className="text-sm font-medium text-[#ededed]">{info?.label ?? id}</span>
+                    <p className="text-xs text-[#737373] mt-0.5">{info?.tip ?? ''}</p>
+                  </div>
+                  <span className="text-xs bg-[#262626] text-[#737373] px-2 py-0.5 rounded-full whitespace-nowrap">{count}x</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Top Tip */}
+      <div>
+        <p className="text-sm text-[#737373] mb-1">Top Tip</p>
+        <div className="bg-[#1a1a1a] border border-[#262626] rounded-md p-3">
+          <p className="text-sm text-yellow-300">{topTip}</p>
+        </div>
+      </div>
+
+      {/* Score breakdown */}
+      <div>
+        <p className="text-sm text-[#737373] mb-1">Turn Scores</p>
+        <div className="flex gap-2 flex-wrap">
+          {turns.map((t) => {
+            const s = t.heuristicScore ?? t.llmScore;
+            return (
+              <span key={t.id} className={`text-xs font-medium px-2 py-1 rounded ${scoreBg(s)}`}>
+                T{t.turnNumber}: {s !== null ? `${Math.round(s)}` : '?'}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --------------- Sub-components ---------------
 
 function TurnCard({ turn }: { turn: TurnData }) {
@@ -504,10 +614,10 @@ export default function SessionDetailPage() {
           </div>
         </div>
 
-        {/* Bottom: LLM Analysis */}
+        {/* Bottom: Session Analysis */}
         <div className="bg-[#141414] border border-[#262626] rounded-lg p-6">
           <h2 className="text-lg font-medium text-[#ededed] mb-4 flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-purple-400" /> LLM Analysis
+            <Sparkles className="w-5 h-5 text-purple-400" /> Session Analysis
           </h2>
           {analysis ? (
             <div className="space-y-4">
@@ -531,10 +641,7 @@ export default function SessionDetailPage() {
               </div>
             </div>
           ) : (
-            <div className="text-[#737373]">
-              <p className="text-sm">No analysis available.</p>
-              <p className="text-xs mt-1">LLM analysis requires scoring mode set to &quot;llm&quot; and Anthropic API credits. Run: <code className="text-[#ededed] bg-[#262626] px-1.5 py-0.5 rounded">evalai config set scoring llm</code></p>
-            </div>
+            <HeuristicAnalysis turns={turns} session={session} />
           )}
         </div>
       </div>
