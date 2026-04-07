@@ -1,8 +1,22 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-export function getSupabase() {
+let _client: SupabaseClient | null = null;
+
+export function getSupabase(): SupabaseClient {
+  if (_client) return _client;
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error('Supabase not configured — set SUPABASE_URL and SUPABASE_ANON_KEY');
-  return createClient(url, key, { auth: { persistSession: false } });
+  _client = createClient(url, key, {
+    auth: { persistSession: false },
+    global: {
+      fetch: (url, options) => {
+        // Add 8 second timeout to all Supabase requests
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeout));
+      },
+    },
+  });
+  return _client;
 }
