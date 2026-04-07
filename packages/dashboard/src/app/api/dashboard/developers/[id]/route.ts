@@ -30,7 +30,7 @@ export async function GET(
     // Fetch developer info
     let memberQuery = supabase
       .from('team_members')
-      .select('id, user_id, display_name, role, github_username, evaluateai_installed, avatar_url')
+      .select('id, name, email, role, github_username, evaluateai_installed')
       .eq('id', id);
     if (teamId) memberQuery = memberQuery.eq('team_id', teamId);
     const { data: member } = await memberQuery.single();
@@ -39,7 +39,7 @@ export async function GET(
       return NextResponse.json({ error: 'Developer not found' }, { status: 404 });
     }
 
-    const devId = member.user_id ?? member.id;
+    const devId = member.id;
 
     // AI sessions this week
     let weekQ = supabase.from('ai_sessions')
@@ -210,11 +210,11 @@ export async function GET(
       developer: {
         id: member.id,
         userId: devId,
-        name: member.display_name,
+        name: member.name,
+        email: member.email,
         role: member.role,
         githubUsername: member.github_username,
         evaluateaiInstalled: member.evaluateai_installed ?? false,
-        avatarUrl: member.avatar_url,
       },
       stats: {
         totalAiCost,
