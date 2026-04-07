@@ -16,7 +16,7 @@
 | 1.4 | Rewrite dashboard API routes for Supabase | ✅ DONE | All 5 API routes use Supabase |
 | 1.5 | Add `evalai init --team <id>` command | ⬜ TODO | |
 | 1.6 | Transcript parser (unchanged — reads local files) | ✅ DONE | Stays local, pushes data to Supabase |
-| 1.7 | Test: hook → Supabase → verify data | ⬜ TODO | Need to run SQL schema first |
+| 1.7 | Test: hook → Supabase → verify data | ✅ DONE | All 14 tables created, hook→Supabase flow verified |
 
 ### Week 2: GitHub Integration + Team Setup
 

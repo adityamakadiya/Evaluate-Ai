@@ -354,7 +354,7 @@ LEFT JOIN LATERAL (
 ) cc ON true
 LEFT JOIN LATERAL (
   SELECT
-    COUNT(DISTINCT session_id) as sessions,
+    COUNT(DISTINCT id) as sessions,
     SUM(total_cost_usd) as cost,
     AVG(avg_prompt_score) as avg_score
   FROM ai_sessions
