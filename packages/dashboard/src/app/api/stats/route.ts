@@ -16,15 +16,18 @@ interface PeriodStats {
   efficiency: number | null;
 }
 
-async function periodStats(teamId: string, fromDate: string, toDate: string): Promise<PeriodStats> {
+async function periodStats(teamId: string | null, fromDate: string, toDate: string): Promise<PeriodStats> {
   const supabase = getSupabase();
 
-  const { data } = await supabase
+  let query = supabase
     .from('ai_sessions')
     .select('total_turns, total_input_tokens, total_output_tokens, total_cost_usd, avg_prompt_score, efficiency_score')
-    .eq('team_id', teamId)
     .gte('started_at', fromDate)
     .lt('started_at', toDate);
+
+  if (teamId) query = query.eq('team_id', teamId);
+
+  const { data } = await query;
 
   if (!data || data.length === 0) {
     return { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null };
@@ -57,22 +60,7 @@ const emptyStats = { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, 
 export async function GET(request: NextRequest) {
   const teamId = getTeamId(request);
 
-  if (!teamId) {
-    return NextResponse.json({
-      error: 'team_id is required (pass as query param or x-team-id header)',
-      today: emptyStats,
-      thisWeek: emptyStats,
-      thisMonth: emptyStats,
-      previousDay: emptyStats,
-      previousWeek: emptyStats,
-      previousMonth: emptyStats,
-      costTrend: [],
-      scoreTrend: [],
-      topAntiPatterns: [],
-      modelUsage: [],
-      recentSessions: [],
-    }, { status: 400 });
-  }
+  // team_id is optional — if not provided, returns all sessions (developer view)
 
   try {
     const supabase = getSupabase();
@@ -111,11 +99,13 @@ export async function GET(request: NextRequest) {
 
     // Cost trend (last 30 days)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
-    const { data: costRows } = await supabase
+
+    let costQ = supabase
       .from('ai_sessions')
       .select('started_at, total_cost_usd')
-      .eq('team_id', teamId)
       .gte('started_at', thirtyDaysAgo);
+    if (teamId) costQ = costQ.eq('team_id', teamId);
+    const { data: costRows } = await costQ;
 
     const costByDate: Record<string, number> = {};
     for (const row of costRows ?? []) {
@@ -127,12 +117,13 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => a.date.localeCompare(b.date));
 
     // Score trend (last 30 days)
-    const { data: scoreRows } = await supabase
+    let scoreQ = supabase
       .from('ai_sessions')
       .select('started_at, avg_prompt_score')
-      .eq('team_id', teamId)
       .gte('started_at', thirtyDaysAgo)
       .not('avg_prompt_score', 'is', null);
+    if (teamId) scoreQ = scoreQ.eq('team_id', teamId);
+    const { data: scoreRows } = await scoreQ;
 
     const scoreByDate: Record<string, { sum: number; count: number }> = {};
     for (const row of scoreRows ?? []) {
@@ -145,11 +136,12 @@ export async function GET(request: NextRequest) {
       .map(([date, { sum, count }]) => ({ date, score: sum / count }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    // Top anti-patterns — need to get session IDs for this team first, then query turns
-    const { data: teamSessionIds } = await supabase
+    // Top anti-patterns — need to get session IDs first, then query turns
+    let sessionIdQ = supabase
       .from('ai_sessions')
-      .select('id')
-      .eq('team_id', teamId);
+      .select('id');
+    if (teamId) sessionIdQ = sessionIdQ.eq('team_id', teamId);
+    const { data: teamSessionIds } = await sessionIdQ;
 
     const patternCounts: Record<string, number> = {};
     if (teamSessionIds && teamSessionIds.length > 0) {
@@ -182,11 +174,12 @@ export async function GET(request: NextRequest) {
       .slice(0, 10);
 
     // Model usage
-    const { data: modelRows } = await supabase
+    let modelQ = supabase
       .from('ai_sessions')
       .select('model, total_cost_usd')
-      .eq('team_id', teamId)
       .not('model', 'is', null);
+    if (teamId) modelQ = modelQ.eq('team_id', teamId);
+    const { data: modelRows } = await modelQ;
 
     const modelMap: Record<string, { count: number; cost: number }> = {};
     for (const row of modelRows ?? []) {
@@ -200,12 +193,13 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => b.count - a.count);
 
     // Recent sessions with first prompt as task name
-    const { data: recentSessionRows } = await supabase
+    let recentQ = supabase
       .from('ai_sessions')
       .select('id, total_turns, total_cost_usd, avg_prompt_score, started_at')
-      .eq('team_id', teamId)
       .order('started_at', { ascending: false })
       .limit(15);
+    if (teamId) recentQ = recentQ.eq('team_id', teamId);
+    const { data: recentSessionRows } = await recentQ;
 
     const recentSessions: Array<{
       id: string; task: string; turns: number; cost: number; score: number | null; startedAt: string;

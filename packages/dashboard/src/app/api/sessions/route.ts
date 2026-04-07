@@ -20,13 +20,9 @@ const ALLOWED_SORT_COLUMNS = new Set([
 
 export async function GET(request: NextRequest) {
   const teamId = getTeamId(request);
-
-  if (!teamId) {
-    return NextResponse.json(
-      { error: 'team_id is required (pass as query param or x-team-id header)', sessions: [], total: 0 },
-      { status: 400 }
-    );
-  }
+  const developerId = request.nextUrl.searchParams.get('developer_id');
+  // team_id is optional — if not provided, returns all sessions (developer view)
+  // if developer_id provided, filters to that developer's sessions
 
   try {
     const supabase = getSupabase();
@@ -39,10 +35,14 @@ export async function GET(request: NextRequest) {
       : 'started_at';
     const order = (searchParams.get('order') ?? 'desc').toLowerCase() === 'asc';
 
-    const { data, count } = await supabase
+    let query = supabase
       .from('ai_sessions')
-      .select('id, tool, model, started_at, ended_at, total_turns, total_cost_usd, avg_prompt_score, efficiency_score, project_dir, git_branch', { count: 'exact' })
-      .eq('team_id', teamId)
+      .select('id, tool, model, started_at, ended_at, total_turns, total_cost_usd, avg_prompt_score, efficiency_score, project_dir, git_branch, developer_id, team_id', { count: 'exact' });
+
+    if (teamId) query = query.eq('team_id', teamId);
+    if (developerId) query = query.eq('developer_id', developerId);
+
+    const { data, count } = await query
       .order(sort, { ascending: order })
       .range(offset, offset + limit - 1);
 
