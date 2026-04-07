@@ -142,13 +142,27 @@ export default function ReportsPage() {
   const [weeklyData, setWeeklyData] = useState<WeeklyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
   useEffect(() => {
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!teamId) return;
     setLoading(true);
     setError(null);
 
+    const headers = { 'x-user-name': userName };
+
     if (tab === 'daily') {
-      fetch(`/api/reports/daily?team_id=default&date=${selectedDate}`)
+      fetch(`/api/reports/daily?team_id=${teamId}&date=${selectedDate}`, { headers })
         .then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
@@ -159,7 +173,7 @@ export default function ReportsPage() {
         })
         .catch(err => { setError(err.message); setLoading(false); });
     } else if (tab === 'weekly') {
-      fetch(`/api/reports/weekly?team_id=default&week_start=${weekStart}`)
+      fetch(`/api/reports/weekly?team_id=${teamId}&week_start=${weekStart}`, { headers })
         .then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
@@ -172,7 +186,7 @@ export default function ReportsPage() {
     } else {
       setLoading(false);
     }
-  }, [tab, selectedDate, weekStart]);
+  }, [tab, selectedDate, weekStart, teamId, userName]);
 
   const navigateDate = (direction: number) => {
     const d = new Date(selectedDate + 'T00:00:00');

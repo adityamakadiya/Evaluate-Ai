@@ -1,13 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 
-export async function GET() {
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
+}
+
+export async function GET(request: NextRequest) {
+  const teamId = getTeamId(request);
+
+  if (!teamId) {
+    return NextResponse.json(
+      { error: 'team_id is required (pass as query param or x-team-id header)' },
+      { status: 400 }
+    );
+  }
+
   try {
     const supabase = getSupabase();
 
     const { data, error } = await supabase
       .from('config')
       .select('key, value, updated_at')
+      .eq('team_id', teamId)
       .order('key');
 
     if (error) {
@@ -28,6 +44,15 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  const teamId = getTeamId(request);
+
+  if (!teamId) {
+    return NextResponse.json(
+      { error: 'team_id is required (pass as query param or x-team-id header)' },
+      { status: 400 }
+    );
+  }
+
   let body: { key?: string; value?: string };
   try {
     body = await request.json();
@@ -51,7 +76,7 @@ export async function PUT(request: NextRequest) {
     const { error } = await supabase
       .from('config')
       .upsert(
-        { key, value, updated_at: now },
+        { team_id: teamId, key, value, updated_at: now },
         { onConflict: 'team_id,key' }
       );
 

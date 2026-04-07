@@ -136,16 +136,31 @@ export default function DeveloperDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('timeline');
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
   useEffect(() => {
-    fetch(`/api/dashboard/developers/${id}`)
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!teamId) return;
+    setLoading(true);
+    fetch(`/api/dashboard/developers/${id}?team_id=${teamId}`, {
+      headers: { 'x-user-name': userName },
+    })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then(json => { setData(json); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
-  }, [id]);
+  }, [id, teamId, userName]);
 
   return (
     <div className="min-h-screen">
@@ -230,7 +245,7 @@ export default function DeveloperDetailPage() {
           {/* Tab content */}
           <div className="animate-section">
             {activeTab === 'timeline' && (
-              <DeveloperTimeline developerId={id} />
+              <DeveloperTimeline developerId={id} teamId={teamId} userName={userName} />
             )}
             {activeTab === 'work' && (
               <DeveloperWorkTab

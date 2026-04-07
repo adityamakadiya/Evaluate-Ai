@@ -97,11 +97,24 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterType>('all');
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
-  const fetchAlerts = () => {
+  useEffect(() => {
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
+  }, []);
+
+  const fetchAlerts = (tid: string, uname: string) => {
+    if (!tid) return;
     setLoading(true);
-    // Use a default team_id query — in production this comes from auth context
-    fetch('/api/alerts?team_id=default&limit=50')
+    fetch(`/api/alerts?team_id=${tid}&limit=50`, {
+      headers: { 'x-user-name': uname },
+    })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -117,15 +130,16 @@ export default function AlertsPage() {
   };
 
   useEffect(() => {
-    fetchAlerts();
-  }, []);
+    if (!teamId) return;
+    fetchAlerts(teamId, userName);
+  }, [teamId, userName]);
 
   const handleAction = async (alertId: string, action: 'read' | 'dismiss') => {
     try {
       const res = await fetch('/api/alerts', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alertId, action }),
+        headers: { 'Content-Type': 'application/json', 'x-user-name': userName },
+        body: JSON.stringify({ alertId, action, teamId }),
       });
       if (res.ok) {
         setAlerts(prev =>

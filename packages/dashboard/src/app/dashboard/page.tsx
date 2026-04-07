@@ -170,17 +170,33 @@ export default function DashboardPage() {
   const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
   useEffect(() => {
-    fetch('/api/dashboard/overview')
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!teamId) return;
+    setLoading(true);
+    fetch(`/api/dashboard/overview?team_id=${teamId}`, {
+      headers: { 'x-user-name': userName },
+    })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then(json => { setData(json); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
-  }, []);
+  }, [teamId, userName]);
 
+  const noTeam = !teamId && !loading;
   const isEmpty = data && data.timeline.length === 0 && data.stats.totalDevs === 0;
 
   return (
@@ -188,7 +204,7 @@ export default function DashboardPage() {
       {/* Header */}
       <header className="mb-8 animate-section">
         <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
-          {data?.greeting ?? 'Good morning'}, Manager
+          {data?.greeting ?? 'Good morning'}{userName ? `, ${userName}` : ''}
         </h1>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
@@ -196,7 +212,15 @@ export default function DashboardPage() {
         </p>
       </header>
 
-      {loading && <LoadingSkeleton />}
+      {noTeam && (
+        <div className="animate-section flex flex-col items-center justify-center py-16 text-center">
+          <Activity className="w-10 h-10 text-[var(--text-muted)] mb-3" />
+          <p className="text-sm text-[var(--text-secondary)]">No team linked</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">Login and link to a team to see your dashboard.</p>
+        </div>
+      )}
+
+      {loading && teamId && <LoadingSkeleton />}
 
       {error && (
         <div className="animate-section rounded-lg border border-red-900/50 bg-red-950/20 p-5 text-sm text-red-400">

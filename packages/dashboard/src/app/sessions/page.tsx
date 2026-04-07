@@ -211,6 +211,8 @@ export default function SessionsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [mounted, setMounted] = useState(false);
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
   // Filters
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
@@ -220,12 +222,21 @@ export default function SessionsPage() {
 
   useEffect(() => {
     setMounted(true);
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
   }, []);
 
   useEffect(() => {
+    if (!teamId) return;
     setLoading(true);
     setError(null);
-    fetch(`/api/sessions?limit=${PAGE_SIZE}&offset=${offset}`)
+    fetch(`/api/sessions?limit=${PAGE_SIZE}&offset=${offset}&team_id=${teamId}`, {
+      headers: { 'x-user-name': userName },
+    })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json() as Promise<SessionsResponse>;
@@ -236,7 +247,7 @@ export default function SessionsPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [offset]);
+  }, [offset, teamId, userName]);
 
   const filtered = useMemo(() => {
     let list = sessions;
@@ -349,8 +360,28 @@ export default function SessionsPage() {
     );
   }
 
+  // ---------- No team state ----------
+  if (!teamId && !loading) {
+    return (
+      <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="max-w-7xl mx-auto">
+          <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-8">Sessions</h1>
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="w-20 h-20 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-primary)] flex items-center justify-center mb-6">
+              <FileQuestion className="w-10 h-10 text-[var(--text-muted)]" />
+            </div>
+            <h3 className="text-lg font-medium text-[var(--text-primary)] mb-2">No team linked</h3>
+            <p className="text-[var(--text-muted)] text-sm max-w-sm leading-relaxed">
+              Login and link to a team to see sessions.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ---------- Empty state ----------
-  if (sessions.length === 0 && offset === 0) {
+  if (sessions.length === 0 && offset === 0 && !loading) {
     return (
       <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
         <div className="max-w-7xl mx-auto">

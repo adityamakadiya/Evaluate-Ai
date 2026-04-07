@@ -1,20 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
+}
+
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const teamId = getTeamId(request);
 
   try {
     const supabase = getSupabase();
 
-    const { data: session, error: sessionErr } = await supabase
+    let sessionQuery = supabase
       .from('ai_sessions')
       .select('*')
-      .eq('id', id)
-      .single();
+      .eq('id', id);
+    if (teamId) sessionQuery = sessionQuery.eq('team_id', teamId);
+    const { data: session, error: sessionErr } = await sessionQuery.single();
 
     if (sessionErr || !session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });

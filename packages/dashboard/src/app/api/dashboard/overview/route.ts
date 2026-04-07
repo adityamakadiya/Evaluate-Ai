@@ -1,14 +1,37 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
 }
 
-export async function GET() {
+function getGreeting(userName?: string | null): string {
+  const hour = new Date().getHours();
+  let greeting: string;
+  if (hour < 12) greeting = 'Good morning';
+  else if (hour < 18) greeting = 'Good afternoon';
+  else greeting = 'Good evening';
+  if (userName) greeting += `, ${userName}`;
+  return greeting;
+}
+
+export async function GET(request: NextRequest) {
+  const teamId = getTeamId(request);
+  const userName = request.headers.get('x-user-name') || null;
+
+  if (!teamId) {
+    return NextResponse.json({
+      error: 'team_id is required (pass as query param or x-team-id header)',
+      greeting: getGreeting(userName),
+      stats: { activeDevs: 0, totalDevs: 0, prsMerged: 0, tasksDone: 0, tasksTotal: 0, aiSpend: 0, commits: 0 },
+      timeline: [],
+      alerts: [],
+      healthScore: 0,
+    }, { status: 400 });
+  }
+
   try {
     const supabase = getSupabase();
     const now = new Date();
@@ -25,6 +48,7 @@ export async function GET() {
     const { data: aiData } = await supabase
       .from('ai_sessions')
       .select('total_cost_usd, developer_id')
+      .eq('team_id', teamId)
       .gte('started_at', weekStartStr)
       .lt('started_at', tomorrowStr);
 
@@ -34,6 +58,7 @@ export async function GET() {
     const { data: codeData } = await supabase
       .from('code_changes')
       .select('change_type')
+      .eq('team_id', teamId)
       .gte('created_at', weekStartStr)
       .lt('created_at', tomorrowStr);
 
@@ -44,6 +69,7 @@ export async function GET() {
     const { data: taskData, count: tasksTotal } = await supabase
       .from('tasks')
       .select('status', { count: 'exact' })
+      .eq('team_id', teamId)
       .gte('created_at', weekStartStr);
 
     const tasksDone = (taskData ?? []).filter(r => r.status === 'completed').length;
@@ -51,7 +77,8 @@ export async function GET() {
     // Active developers (those with any activity this week)
     const { data: teamMembers } = await supabase
       .from('team_members')
-      .select('id, user_id, display_name, role');
+      .select('id, user_id, display_name, role')
+      .eq('team_id', teamId);
 
     const activeDeveloperIds = new Set(
       (aiData ?? []).map(r => r.developer_id).filter(Boolean)
@@ -63,6 +90,7 @@ export async function GET() {
     const { data: timelineData } = await supabase
       .from('activity_timeline')
       .select('id, event_type, title, description, developer_name, metadata, created_at')
+      .eq('team_id', teamId)
       .order('created_at', { ascending: false })
       .limit(20);
 
@@ -80,7 +108,8 @@ export async function GET() {
     const { data: alertData } = await supabase
       .from('alerts')
       .select('id, title, severity, description, created_at')
-      .eq('read', false)
+      .eq('team_id', teamId)
+      .eq('is_read', false)
       .order('created_at', { ascending: false })
       .limit(3);
 
@@ -93,13 +122,13 @@ export async function GET() {
     }));
 
     // Calculate team health score (0-100)
-    // Based on: task completion rate, active dev ratio, PR velocity, avg prompt score
     const taskCompletionRate = (tasksTotal ?? 0) > 0 ? tasksDone / (tasksTotal ?? 1) : 0.5;
     const activeDevRate = totalDevs > 0 ? activeDevs / totalDevs : 0.5;
 
     const { data: scoreData } = await supabase
       .from('ai_sessions')
       .select('avg_prompt_score')
+      .eq('team_id', teamId)
       .gte('started_at', weekStartStr)
       .not('avg_prompt_score', 'is', null);
 
@@ -112,7 +141,7 @@ export async function GET() {
     );
 
     return NextResponse.json({
-      greeting: getGreeting(),
+      greeting: getGreeting(userName),
       stats: {
         activeDevs,
         totalDevs,
@@ -129,7 +158,7 @@ export async function GET() {
   } catch (err) {
     console.error('Dashboard overview API error:', err);
     return NextResponse.json({
-      greeting: getGreeting(),
+      greeting: getGreeting(userName),
       stats: { activeDevs: 0, totalDevs: 0, prsMerged: 0, tasksDone: 0, tasksTotal: 0, aiSpend: 0, commits: 0 },
       timeline: [],
       alerts: [],

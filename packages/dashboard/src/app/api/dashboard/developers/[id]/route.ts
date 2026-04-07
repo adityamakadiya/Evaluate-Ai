@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
+    const teamId = getTeamId(request);
     const supabase = getSupabase();
     const now = new Date();
     const tomorrowStr = new Date(now.getTime() + 86400000).toISOString().slice(0, 10);
@@ -21,11 +28,12 @@ export async function GET(
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
 
     // Fetch developer info
-    const { data: member } = await supabase
+    let memberQuery = supabase
       .from('team_members')
       .select('id, user_id, display_name, role, github_username, evaluateai_installed, avatar_url')
-      .eq('id', id)
-      .single();
+      .eq('id', id);
+    if (teamId) memberQuery = memberQuery.eq('team_id', teamId);
+    const { data: member } = await memberQuery.single();
 
     if (!member) {
       return NextResponse.json({ error: 'Developer not found' }, { status: 404 });
@@ -33,42 +41,46 @@ export async function GET(
 
     const devId = member.user_id ?? member.id;
 
+    // Build team filter helper
+    const withTeam = <T extends { eq: (col: string, val: string) => T }>(q: T): T =>
+      teamId ? q.eq('team_id', teamId) : q;
+
     // AI sessions this week
-    const { data: weekSessions } = await supabase
+    const { data: weekSessions } = await withTeam(supabase
       .from('ai_sessions')
       .select('id, model, total_cost_usd, avg_prompt_score, total_turns, total_input_tokens, total_output_tokens, started_at')
-      .eq('developer_id', devId)
+      .eq('developer_id', devId))
       .gte('started_at', weekStartStr)
       .order('started_at', { ascending: false });
 
     // AI sessions last 30 days for trends
-    const { data: monthSessions } = await supabase
+    const { data: monthSessions } = await withTeam(supabase
       .from('ai_sessions')
       .select('id, model, total_cost_usd, avg_prompt_score, started_at')
-      .eq('developer_id', devId)
+      .eq('developer_id', devId))
       .gte('started_at', thirtyDaysAgo)
       .order('started_at', { ascending: false });
 
     // Code changes this week
-    const { data: weekCode } = await supabase
+    const { data: weekCode } = await withTeam(supabase
       .from('code_changes')
       .select('id, change_type, title, description, repo, files_changed, additions, deletions, branch, created_at, metadata')
-      .eq('developer_id', devId)
+      .eq('developer_id', devId))
       .gte('created_at', weekStartStr)
       .order('created_at', { ascending: false });
 
     // Code changes last 30 days
-    const { data: monthCode } = await supabase
+    const { data: monthCode } = await withTeam(supabase
       .from('code_changes')
       .select('change_type, created_at')
-      .eq('developer_id', devId)
+      .eq('developer_id', devId))
       .gte('created_at', thirtyDaysAgo);
 
     // Tasks
-    const { data: devTasks } = await supabase
+    const { data: devTasks } = await withTeam(supabase
       .from('tasks')
       .select('id, title, status, source, created_at, completed_at')
-      .eq('assignee_id', devId)
+      .eq('assignee_id', devId))
       .order('created_at', { ascending: false });
 
     // Anti-patterns from ai_turns

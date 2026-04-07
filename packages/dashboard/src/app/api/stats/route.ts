@@ -1,5 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
+
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
+}
 
 interface PeriodStats {
   sessions: number;
@@ -10,12 +16,13 @@ interface PeriodStats {
   efficiency: number | null;
 }
 
-async function periodStats(fromDate: string, toDate: string): Promise<PeriodStats> {
+async function periodStats(teamId: string, fromDate: string, toDate: string): Promise<PeriodStats> {
   const supabase = getSupabase();
 
   const { data } = await supabase
     .from('ai_sessions')
     .select('total_turns, total_input_tokens, total_output_tokens, total_cost_usd, avg_prompt_score, efficiency_score')
+    .eq('team_id', teamId)
     .gte('started_at', fromDate)
     .lt('started_at', toDate);
 
@@ -45,7 +52,28 @@ async function periodStats(fromDate: string, toDate: string): Promise<PeriodStat
   };
 }
 
-export async function GET() {
+const emptyStats = { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null };
+
+export async function GET(request: NextRequest) {
+  const teamId = getTeamId(request);
+
+  if (!teamId) {
+    return NextResponse.json({
+      error: 'team_id is required (pass as query param or x-team-id header)',
+      today: emptyStats,
+      thisWeek: emptyStats,
+      thisMonth: emptyStats,
+      previousDay: emptyStats,
+      previousWeek: emptyStats,
+      previousMonth: emptyStats,
+      costTrend: [],
+      scoreTrend: [],
+      topAntiPatterns: [],
+      modelUsage: [],
+      recentSessions: [],
+    }, { status: 400 });
+  }
+
   try {
     const supabase = getSupabase();
     const now = new Date();
@@ -73,12 +101,12 @@ export async function GET() {
 
     // Gather period stats
     const [today, thisWeek, thisMonth, previousDay, previousWeek, previousMonth] = await Promise.all([
-      periodStats(todayStr, tomorrowStr),
-      periodStats(weekStartStr, tomorrowStr),
-      periodStats(monthStartStr, tomorrowStr),
-      periodStats(yesterdayStr, todayStr),
-      periodStats(prevWeekStartStr, weekStartStr),
-      periodStats(prevMonthStartStr, prevMonthEndStr),
+      periodStats(teamId, todayStr, tomorrowStr),
+      periodStats(teamId, weekStartStr, tomorrowStr),
+      periodStats(teamId, monthStartStr, tomorrowStr),
+      periodStats(teamId, yesterdayStr, todayStr),
+      periodStats(teamId, prevWeekStartStr, weekStartStr),
+      periodStats(teamId, prevMonthStartStr, prevMonthEndStr),
     ]);
 
     // Cost trend (last 30 days)
@@ -86,6 +114,7 @@ export async function GET() {
     const { data: costRows } = await supabase
       .from('ai_sessions')
       .select('started_at, total_cost_usd')
+      .eq('team_id', teamId)
       .gte('started_at', thirtyDaysAgo);
 
     const costByDate: Record<string, number> = {};
@@ -101,6 +130,7 @@ export async function GET() {
     const { data: scoreRows } = await supabase
       .from('ai_sessions')
       .select('started_at, avg_prompt_score')
+      .eq('team_id', teamId)
       .gte('started_at', thirtyDaysAgo)
       .not('avg_prompt_score', 'is', null);
 
@@ -115,20 +145,34 @@ export async function GET() {
       .map(([date, { sum, count }]) => ({ date, score: sum / count }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    // Top anti-patterns — aggregate from ai_turns JSONB anti_patterns column
-    const { data: apRows } = await supabase
-      .from('ai_turns')
-      .select('anti_patterns')
-      .not('anti_patterns', 'is', null);
+    // Top anti-patterns — need to get session IDs for this team first, then query turns
+    const { data: teamSessionIds } = await supabase
+      .from('ai_sessions')
+      .select('id')
+      .eq('team_id', teamId);
 
     const patternCounts: Record<string, number> = {};
-    for (const row of apRows ?? []) {
-      const patterns = row.anti_patterns;
-      if (!Array.isArray(patterns)) continue;
-      for (const p of patterns) {
-        const id = typeof p === 'string' ? p : (p as Record<string, unknown>)?.id;
-        if (typeof id === 'string') {
-          patternCounts[id] = (patternCounts[id] ?? 0) + 1;
+    if (teamSessionIds && teamSessionIds.length > 0) {
+      const sessionIds = teamSessionIds.map(s => s.id);
+      // Query in batches if needed (Supabase IN has limits)
+      const batchSize = 200;
+      for (let i = 0; i < sessionIds.length; i += batchSize) {
+        const batch = sessionIds.slice(i, i + batchSize);
+        const { data: apRows } = await supabase
+          .from('ai_turns')
+          .select('anti_patterns')
+          .in('session_id', batch)
+          .not('anti_patterns', 'is', null);
+
+        for (const row of apRows ?? []) {
+          const patterns = row.anti_patterns;
+          if (!Array.isArray(patterns)) continue;
+          for (const p of patterns) {
+            const id = typeof p === 'string' ? p : (p as Record<string, unknown>)?.id;
+            if (typeof id === 'string') {
+              patternCounts[id] = (patternCounts[id] ?? 0) + 1;
+            }
+          }
         }
       }
     }
@@ -141,6 +185,7 @@ export async function GET() {
     const { data: modelRows } = await supabase
       .from('ai_sessions')
       .select('model, total_cost_usd')
+      .eq('team_id', teamId)
       .not('model', 'is', null);
 
     const modelMap: Record<string, { count: number; cost: number }> = {};
@@ -158,6 +203,7 @@ export async function GET() {
     const { data: recentSessionRows } = await supabase
       .from('ai_sessions')
       .select('id, total_turns, total_cost_usd, avg_prompt_score, started_at')
+      .eq('team_id', teamId)
       .order('started_at', { ascending: false })
       .limit(15);
 
@@ -212,12 +258,12 @@ export async function GET() {
   } catch (err) {
     console.error('Stats API error:', err);
     return NextResponse.json({
-      today: { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null },
-      thisWeek: { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null },
-      thisMonth: { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null },
-      previousDay: { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null },
-      previousWeek: { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null },
-      previousMonth: { sessions: 0, turns: 0, tokens: 0, cost: 0, avgScore: null, efficiency: null },
+      today: emptyStats,
+      thisWeek: emptyStats,
+      thisMonth: emptyStats,
+      previousDay: emptyStats,
+      previousWeek: emptyStats,
+      previousMonth: emptyStats,
       costTrend: [],
       scoreTrend: [],
       topAntiPatterns: [],

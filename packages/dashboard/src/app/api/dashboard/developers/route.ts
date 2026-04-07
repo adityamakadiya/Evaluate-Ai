@@ -1,7 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
+}
+
 export async function GET(request: NextRequest) {
+  const teamId = getTeamId(request);
+
+  if (!teamId) {
+    return NextResponse.json(
+      { error: 'team_id is required (pass as query param or x-team-id header)', developers: [] },
+      { status: 400 }
+    );
+  }
+
   try {
     const supabase = getSupabase();
     const now = new Date();
@@ -15,33 +30,37 @@ export async function GET(request: NextRequest) {
 
     const sortBy = request.nextUrl.searchParams.get('sort') ?? 'name';
 
-    // Fetch all team members
+    // Fetch all team members for this team
     const { data: members } = await supabase
       .from('team_members')
-      .select('id, user_id, display_name, role, github_username, evaluateai_installed, avatar_url');
+      .select('id, user_id, display_name, role, github_username, evaluateai_installed, avatar_url')
+      .eq('team_id', teamId);
 
     if (!members || members.length === 0) {
       return NextResponse.json({ developers: [] });
     }
 
-    // Fetch AI sessions this week for all devs
+    // Fetch AI sessions this week for this team
     const { data: aiSessions } = await supabase
       .from('ai_sessions')
       .select('developer_id, total_cost_usd, avg_prompt_score')
+      .eq('team_id', teamId)
       .gte('started_at', weekStartStr)
       .lt('started_at', tomorrowStr);
 
-    // Fetch code changes this week
+    // Fetch code changes this week for this team
     const { data: codeChanges } = await supabase
       .from('code_changes')
       .select('developer_id, change_type')
+      .eq('team_id', teamId)
       .gte('created_at', weekStartStr)
       .lt('created_at', tomorrowStr);
 
-    // Fetch tasks this week
+    // Fetch tasks this week for this team
     const { data: tasks } = await supabase
       .from('tasks')
       .select('assignee_id, status')
+      .eq('team_id', teamId)
       .gte('created_at', weekStartStr);
 
     // Aggregate per developer

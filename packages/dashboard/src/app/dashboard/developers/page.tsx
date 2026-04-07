@@ -97,16 +97,31 @@ export default function DevelopersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('name');
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
   useEffect(() => {
-    fetch(`/api/dashboard/developers?sort=${sortBy}`)
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!teamId) return;
+    setLoading(true);
+    fetch(`/api/dashboard/developers?sort=${sortBy}&team_id=${teamId}`, {
+      headers: { 'x-user-name': userName },
+    })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then(json => { setDevelopers(json.developers); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
-  }, [sortBy]);
+  }, [sortBy, teamId, userName]);
 
   return (
     <div className="min-h-screen">
@@ -135,7 +150,15 @@ export default function DevelopersPage() {
         </div>
       </header>
 
-      {loading && <LoadingSkeleton />}
+      {!teamId && !loading && (
+        <div className="animate-section flex flex-col items-center justify-center py-16 text-center">
+          <Users className="w-10 h-10 text-[var(--text-muted)] mb-3" />
+          <p className="text-sm text-[var(--text-secondary)]">No team linked</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">Login and link to a team to see developers.</p>
+        </div>
+      )}
+
+      {loading && teamId && <LoadingSkeleton />}
 
       {error && (
         <div className="animate-section rounded-lg border border-red-900/50 bg-red-950/20 p-5 text-sm text-red-400">
@@ -143,7 +166,7 @@ export default function DevelopersPage() {
         </div>
       )}
 
-      {!loading && !error && developers.length === 0 && (
+      {!loading && !error && teamId && developers.length === 0 && (
         <div className="animate-section flex flex-col items-center justify-center py-16 text-center">
           <Users className="w-10 h-10 text-[var(--text-muted)] mb-3" />
           <p className="text-sm text-[var(--text-secondary)]">No team members found</p>

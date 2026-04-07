@@ -156,9 +156,24 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>('month');
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
   useEffect(() => {
-    fetch('/api/stats')
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!teamId) return;
+    setLoading(true);
+    fetch(`/api/stats?team_id=${teamId}`, {
+      headers: { 'x-user-name': userName },
+    })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -198,7 +213,7 @@ export default function AnalyticsPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [teamId, userName]);
 
   if (loading) {
     return (

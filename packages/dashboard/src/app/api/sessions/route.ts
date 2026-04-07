@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
+}
+
 const ALLOWED_SORT_COLUMNS = new Set([
   'started_at',
   'ended_at',
@@ -13,6 +19,15 @@ const ALLOWED_SORT_COLUMNS = new Set([
 ]);
 
 export async function GET(request: NextRequest) {
+  const teamId = getTeamId(request);
+
+  if (!teamId) {
+    return NextResponse.json(
+      { error: 'team_id is required (pass as query param or x-team-id header)', sessions: [], total: 0 },
+      { status: 400 }
+    );
+  }
+
   try {
     const supabase = getSupabase();
     const { searchParams } = request.nextUrl;
@@ -27,6 +42,7 @@ export async function GET(request: NextRequest) {
     const { data, count } = await supabase
       .from('ai_sessions')
       .select('id, tool, model, started_at, ended_at, total_turns, total_cost_usd, avg_prompt_score, efficiency_score, project_dir, git_branch', { count: 'exact' })
+      .eq('team_id', teamId)
       .order(sort, { ascending: order })
       .range(offset, offset + limit - 1);
 

@@ -26,6 +26,8 @@ interface TimelineEvent {
 
 interface DeveloperTimelineProps {
   developerId: string;
+  teamId?: string;
+  userName?: string;
 }
 
 const FILTERS = [
@@ -85,7 +87,7 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-export default function DeveloperTimeline({ developerId }: DeveloperTimelineProps) {
+export default function DeveloperTimeline({ developerId, teamId = '', userName = '' }: DeveloperTimelineProps) {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -96,13 +98,14 @@ export default function DeveloperTimeline({ developerId }: DeveloperTimelineProp
   const pageSize = 20;
 
   const fetchEvents = useCallback((filterType: string, startOffset: number, append: boolean) => {
+    if (!teamId) return;
     const filterParam = filterType === 'all' ? '' : `&type=${filterType}`;
-    const url = `/api/dashboard/developers/${developerId}/timeline?limit=${pageSize}&offset=${startOffset}${filterParam}`;
+    const url = `/api/dashboard/developers/${developerId}/timeline?limit=${pageSize}&offset=${startOffset}${filterParam}&team_id=${teamId}`;
 
     if (append) setLoadingMore(true);
     else setLoading(true);
 
-    fetch(url)
+    fetch(url, { headers: { 'x-user-name': userName } })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -122,7 +125,7 @@ export default function DeveloperTimeline({ developerId }: DeveloperTimelineProp
         setLoading(false);
         setLoadingMore(false);
       });
-  }, [developerId]);
+  }, [developerId, teamId, userName]);
 
   useEffect(() => {
     setOffset(0);

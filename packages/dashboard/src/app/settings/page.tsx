@@ -121,9 +121,24 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [teamId, setTeamId] = useState<string>('');
+  const [userName, setUserName] = useState<string>('');
 
   useEffect(() => {
-    fetch('/api/config')
+    try {
+      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
+      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
+      if (team.id) setTeamId(team.id);
+      if (user.name) setUserName(user.name);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!teamId) return;
+    setLoading(true);
+    fetch(`/api/config?team_id=${teamId}`, {
+      headers: { 'x-user-name': userName },
+    })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -145,7 +160,7 @@ export default function SettingsPage() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [teamId, userName]);
 
   const showToast = useCallback(
     (type: 'success' | 'error', message: string) => {
@@ -167,9 +182,9 @@ export default function SettingsPage() {
         ['dashboard_port', String(config!.dashboardPort)],
       ];
       for (const [key, value] of entries) {
-        const res = await fetch('/api/config', {
+        const res = await fetch(`/api/config?team_id=${teamId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-user-name': userName },
           body: JSON.stringify({ key, value }),
         });
         if (!res.ok) throw new Error(`Failed to save ${key}`);
@@ -185,7 +200,9 @@ export default function SettingsPage() {
 
   async function handleExport() {
     try {
-      const res = await fetch('/api/config/export');
+      const res = await fetch(`/api/config/export?team_id=${teamId}`, {
+        headers: { 'x-user-name': userName },
+      });
       if (!res.ok) throw new Error('Export failed');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -202,7 +219,10 @@ export default function SettingsPage() {
 
   async function handleReset() {
     try {
-      const res = await fetch('/api/config/reset', { method: 'POST' });
+      const res = await fetch(`/api/config/reset?team_id=${teamId}`, {
+        method: 'POST',
+        headers: { 'x-user-name': userName },
+      });
       if (!res.ok) throw new Error('Reset failed');
       showToast('success', 'Data reset successfully');
       setShowResetConfirm(false);

@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 
+function getTeamId(request: NextRequest): string | null {
+  return request.nextUrl.searchParams.get('team_id')
+    || request.headers.get('x-team-id')
+    || null;
+}
+
 const VALID_FILTERS = new Set(['ai', 'code', 'meeting', 'task']);
 
 const FILTER_EVENT_TYPES: Record<string, string[]> = {
@@ -16,6 +22,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const teamId = getTeamId(request);
     const supabase = getSupabase();
     const { searchParams } = request.nextUrl;
 
@@ -24,19 +31,21 @@ export async function GET(
     const filterType = searchParams.get('type');
 
     // Get the developer's user_id from team_members
-    const { data: member } = await supabase
+    let memberQuery = supabase
       .from('team_members')
       .select('user_id')
-      .eq('id', id)
-      .single();
+      .eq('id', id);
+    if (teamId) memberQuery = memberQuery.eq('team_id', teamId);
+    const { data: member } = await memberQuery.single();
 
     const developerId = member?.user_id ?? id;
 
     let query = supabase
       .from('activity_timeline')
       .select('id, event_type, title, description, developer_name, metadata, created_at', { count: 'exact' })
-      .eq('developer_id', developerId)
-      .order('created_at', { ascending: false });
+      .eq('developer_id', developerId);
+    if (teamId) query = query.eq('team_id', teamId);
+    query = query.order('created_at', { ascending: false });
 
     // Apply filter
     if (filterType && VALID_FILTERS.has(filterType)) {
