@@ -48,6 +48,9 @@ export default function RootLayout({
   const [currentUser, setCurrentUser] = useState<{ name: string; email: string } | null>(null);
 
   const isAuthPage = pathname.startsWith('/auth');
+  const isMarketingPage = pathname === '/';
+  const isOnboarding = pathname.startsWith('/onboarding');
+  const isPublicPage = isAuthPage || isMarketingPage || isOnboarding;
 
   useEffect(() => {
     const saved = localStorage.getItem('evaluateai-theme') as 'dark' | 'light' | null;
@@ -55,22 +58,21 @@ export default function RootLayout({
   }, []);
 
   useEffect(() => {
+    // Skip auth check on public pages
+    if (isPublicPage) return;
+
     // Load user from localStorage (MVP auth)
     try {
       const stored = localStorage.getItem('evaluateai-user');
       if (stored) {
         setCurrentUser(JSON.parse(stored));
-      } else if (!isAuthPage) {
-        // Redirect to login if not authenticated and not already on auth page
+      } else {
         router.push('/auth/login');
       }
     } catch {
-      // Parse error — redirect to login
-      if (!isAuthPage) {
-        router.push('/auth/login');
-      }
+      router.push('/auth/login');
     }
-  }, [pathname, isAuthPage, router]);
+  }, [pathname, isPublicPage, router]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -94,8 +96,8 @@ export default function RootLayout({
         <meta name="description" content="AI coding assistant evaluation dashboard" />
       </head>
       <body className="min-h-full flex bg-[var(--bg-primary)] text-[var(--text-primary)]">
-        {isAuthPage ? (
-          /* Auth pages: no sidebar, just render children */
+        {isPublicPage ? (
+          /* Marketing, auth, onboarding: no sidebar, just render children */
           <main className="flex-1 min-h-screen">
             {children}
           </main>
