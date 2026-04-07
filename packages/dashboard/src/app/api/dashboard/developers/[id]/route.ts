@@ -41,47 +41,48 @@ export async function GET(
 
     const devId = member.user_id ?? member.id;
 
-    // Build team filter helper
-    const withTeam = <T extends { eq: (col: string, val: string) => T }>(q: T): T =>
-      teamId ? q.eq('team_id', teamId) : q;
-
     // AI sessions this week
-    const { data: weekSessions } = await withTeam(supabase
-      .from('ai_sessions')
+    let weekQ = supabase.from('ai_sessions')
       .select('id, model, total_cost_usd, avg_prompt_score, total_turns, total_input_tokens, total_output_tokens, started_at')
-      .eq('developer_id', devId))
+      .eq('developer_id', devId)
       .gte('started_at', weekStartStr)
       .order('started_at', { ascending: false });
+    if (teamId) weekQ = weekQ.eq('team_id', teamId);
+    const { data: weekSessions } = await weekQ;
 
     // AI sessions last 30 days for trends
-    const { data: monthSessions } = await withTeam(supabase
-      .from('ai_sessions')
+    let monthQ = supabase.from('ai_sessions')
       .select('id, model, total_cost_usd, avg_prompt_score, started_at')
-      .eq('developer_id', devId))
+      .eq('developer_id', devId)
       .gte('started_at', thirtyDaysAgo)
       .order('started_at', { ascending: false });
+    if (teamId) monthQ = monthQ.eq('team_id', teamId);
+    const { data: monthSessions } = await monthQ;
 
     // Code changes this week
-    const { data: weekCode } = await withTeam(supabase
-      .from('code_changes')
-      .select('id, change_type, title, description, repo, files_changed, additions, deletions, branch, created_at, metadata')
-      .eq('developer_id', devId))
+    let weekCodeQ = supabase.from('code_changes')
+      .select('id, type, title, description, repo, files_changed, additions, deletions, branch, created_at')
+      .eq('developer_id', devId)
       .gte('created_at', weekStartStr)
       .order('created_at', { ascending: false });
+    if (teamId) weekCodeQ = weekCodeQ.eq('team_id', teamId);
+    const { data: weekCode } = await weekCodeQ;
 
     // Code changes last 30 days
-    const { data: monthCode } = await withTeam(supabase
-      .from('code_changes')
-      .select('change_type, created_at')
-      .eq('developer_id', devId))
+    let monthCodeQ = supabase.from('code_changes')
+      .select('type, created_at')
+      .eq('developer_id', devId)
       .gte('created_at', thirtyDaysAgo);
+    if (teamId) monthCodeQ = monthCodeQ.eq('team_id', teamId);
+    const { data: monthCode } = await monthCodeQ;
 
     // Tasks
-    const { data: devTasks } = await withTeam(supabase
-      .from('tasks')
-      .select('id, title, status, source, created_at, completed_at')
-      .eq('assignee_id', devId))
+    let tasksQ = supabase.from('tasks')
+      .select('id, title, status, source, created_at')
+      .eq('assignee_id', devId)
       .order('created_at', { ascending: false });
+    if (teamId) tasksQ = tasksQ.eq('team_id', teamId);
+    const { data: devTasks } = await tasksQ;
 
     // Anti-patterns from ai_turns
     const sessionIds = (weekSessions ?? []).map(s => s.id);
@@ -127,9 +128,9 @@ export async function GET(
     const scores = (weekSessions ?? []).filter(s => s.avg_prompt_score != null).map(s => s.avg_prompt_score!);
     const avgPromptScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
 
-    const commitsWeek = (weekCode ?? []).filter(c => c.change_type === 'commit').length;
-    const prsWeek = (weekCode ?? []).filter(c => c.change_type === 'pr_opened' || c.change_type === 'pr_merged').length;
-    const reviewsWeek = (weekCode ?? []).filter(c => c.change_type === 'review').length;
+    const commitsWeek = (weekCode ?? []).filter(c => c.type === 'commit').length;
+    const prsWeek = (weekCode ?? []).filter(c => c.type === 'pr_opened' || c.type === 'pr_merged').length;
+    const reviewsWeek = (weekCode ?? []).filter(c => c.type === 'review').length;
 
     const tasksCompleted = (devTasks ?? []).filter(t => t.status === 'completed').length;
     const tasksAssigned = (devTasks ?? []).length;
@@ -137,7 +138,7 @@ export async function GET(
     // Commits per day (last 30 days)
     const commitsByDay: Record<string, number> = {};
     for (const c of monthCode ?? []) {
-      if (c.change_type === 'commit') {
+      if (c.type === 'commit') {
         const d = (c.created_at as string).slice(0, 10);
         commitsByDay[d] = (commitsByDay[d] ?? 0) + 1;
       }
@@ -237,7 +238,7 @@ export async function GET(
       })),
       codeChanges: (weekCode ?? []).map(c => ({
         id: c.id,
-        type: c.change_type,
+        type: c.type,
         title: c.title,
         description: c.description,
         repo: c.repo,
@@ -246,7 +247,6 @@ export async function GET(
         deletions: c.deletions,
         branch: c.branch,
         createdAt: c.created_at,
-        metadata: c.metadata,
       })),
       tasks: (devTasks ?? []).map(t => ({
         id: t.id,
@@ -254,7 +254,6 @@ export async function GET(
         status: t.status,
         source: t.source,
         createdAt: t.created_at,
-        completedAt: t.completed_at,
       })),
       modelUsage,
       antiPatterns,
