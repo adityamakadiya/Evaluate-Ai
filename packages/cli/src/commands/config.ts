@@ -1,9 +1,14 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { getDb, config } from 'evaluateai-core';
-import type { PrivacyMode, ScoringMode } from 'evaluateai-core';
-import { eq } from 'drizzle-orm';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { printHeader } from '../utils/display.js';
+
+function getSupabase(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
 const VALID_KEYS: Record<string, { validate: (v: string) => boolean; description: string }> = {
   privacy: {
@@ -37,14 +42,20 @@ function toDbKey(key: string): string {
   return key.replace(/-/g, '_');
 }
 
-function showConfig(): void {
-  const db = getDb();
-  const rows = db.select().from(config).all();
+async function showConfig(supabase: SupabaseClient): Promise<void> {
+  const { data: rows, error } = await supabase
+    .from('config')
+    .select('key, value');
 
   printHeader('Configuration');
 
-  if (rows.length === 0) {
-    console.log(chalk.gray('  No configuration found. Run `evalai init` first.'));
+  if (error) {
+    console.log(chalk.red(`  Error: ${error.message}`));
+    return;
+  }
+
+  if (!rows || rows.length === 0) {
+    console.log(chalk.gray('  No configuration found. Run `evalai config set <key> <value>` to add.'));
     return;
   }
 
@@ -55,7 +66,7 @@ function showConfig(): void {
   console.log('');
 }
 
-function setConfig(key: string, value: string): void {
+async function setConfig(supabase: SupabaseClient, key: string, value: string): Promise<void> {
   const validator = VALID_KEYS[key];
   if (!validator) {
     console.log(chalk.red(`  Unknown config key: ${key}`));
@@ -69,14 +80,20 @@ function setConfig(key: string, value: string): void {
     return;
   }
 
-  const db = getDb();
   const dbKey = toDbKey(key);
   const now = new Date().toISOString();
 
-  db.insert(config)
-    .values({ key: dbKey, value, updatedAt: now })
-    .onConflictDoUpdate({ target: config.key, set: { value, updatedAt: now } })
-    .run();
+  const { error } = await supabase
+    .from('config')
+    .upsert(
+      { key: dbKey, value, updated_at: now },
+      { onConflict: 'key' }
+    );
+
+  if (error) {
+    console.log(chalk.red(`  Error: ${error.message}`));
+    return;
+  }
 
   console.log(chalk.green(`  ${key} = ${value}`));
 }
@@ -86,9 +103,16 @@ export const configCommand = new Command('config')
   .argument('[action]', '"set" to update a config value')
   .argument('[key]', 'Config key to set')
   .argument('[value]', 'Config value')
-  .action((action?: string, key?: string, value?: string) => {
+  .action(async (action?: string, key?: string, value?: string) => {
+    const supabase = getSupabase();
+    if (!supabase) {
+      console.log(chalk.red('  Supabase not configured.'));
+      console.log(chalk.gray('  Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables.'));
+      return;
+    }
+
     if (!action) {
-      showConfig();
+      await showConfig(supabase);
       return;
     }
 
@@ -102,7 +126,7 @@ export const configCommand = new Command('config')
         }
         return;
       }
-      setConfig(key, value);
+      await setConfig(supabase, key, value);
       return;
     }
 

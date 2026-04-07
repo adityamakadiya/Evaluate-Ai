@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { initDb } from 'evaluateai-core';
+import { createClient } from '@supabase/supabase-js';
 import { getClaudeSettingsPath, ensureDataDir } from '../utils/paths.js';
 import { printHeader } from '../utils/display.js';
 
@@ -137,11 +137,28 @@ function removeHooks(settings: Record<string, unknown>): Record<string, unknown>
   return settings;
 }
 
+/**
+ * Check Supabase connection.
+ */
+async function checkSupabaseConnection(): Promise<boolean> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return false;
+
+  try {
+    const supabase = createClient(url, key, { auth: { persistSession: false } });
+    const { error } = await supabase.from('ai_sessions').select('id').limit(1);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 export const initCommand = new Command('init')
-  .description('Initialize EvaluateAI: install hooks, create data directory, set up database')
+  .description('Initialize EvaluateAI: install hooks, verify Supabase connection')
   .option('--check', 'Verify that all hooks are installed')
   .option('--uninstall', 'Remove all EvaluateAI hooks')
-  .option('--supabase', 'Configure Supabase cloud sync')
+  .option('--supabase', 'Configure Supabase cloud connection')
   .action(async (opts: { check?: boolean; uninstall?: boolean; supabase?: boolean }) => {
     const settingsPath = getClaudeSettingsPath();
 
@@ -162,6 +179,21 @@ export const initCommand = new Command('init')
       } else {
         console.log(chalk.yellow('  Some hooks are missing. Run `evalai init` to install them.'));
       }
+
+      // Also check Supabase
+      console.log('');
+      printHeader('Supabase Status');
+      if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+        console.log(chalk.red('  ✗ SUPABASE_URL / SUPABASE_ANON_KEY not set'));
+      } else {
+        const ok = await checkSupabaseConnection();
+        if (ok) {
+          console.log(chalk.green('  ✓ Supabase connected'));
+        } else {
+          console.log(chalk.red('  ✗ Cannot reach Supabase. Check your URL and key.'));
+        }
+      }
+      console.log('');
       return;
     }
 
@@ -185,7 +217,7 @@ export const initCommand = new Command('init')
       console.log(chalk.cyan('    export SUPABASE_URL=https://your-project.supabase.co'));
       console.log(chalk.cyan('    export SUPABASE_ANON_KEY=your-anon-key-here'));
       console.log('');
-      console.log(`  Then run ${chalk.cyan('evalai sync')} to push data to Supabase.`);
+      console.log('  All hook data is written directly to Supabase — no local database.');
       console.log('');
       return;
     }
@@ -193,15 +225,24 @@ export const initCommand = new Command('init')
     // --- Default: full init ---
     printHeader('EvaluateAI Init');
 
-    // 1. Create data directory
+    // 1. Create data directory (for .env file storage)
     console.log('  Creating data directory...');
     ensureDataDir();
     console.log(chalk.green('  ✓ ~/.evaluateai-v2/ ready'));
 
-    // 2. Initialize SQLite
-    console.log('  Initializing database...');
-    initDb();
-    console.log(chalk.green('  ✓ Database initialized'));
+    // 2. Check Supabase connection
+    console.log('  Checking Supabase connection...');
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+      console.log(chalk.yellow('  ⚠ SUPABASE_URL / SUPABASE_ANON_KEY not set'));
+      console.log(chalk.gray('    Run `evalai init --supabase` for setup instructions.'));
+    } else {
+      const connected = await checkSupabaseConnection();
+      if (connected) {
+        console.log(chalk.green('  ✓ Supabase connected'));
+      } else {
+        console.log(chalk.yellow('  ⚠ Cannot reach Supabase. Check your URL and key.'));
+      }
+    }
 
     // 3. Install hooks into Claude Code settings
     console.log('  Installing hooks into Claude Code...');
@@ -218,6 +259,6 @@ export const initCommand = new Command('init')
     console.log('');
     console.log(chalk.bold('  Setup complete!'));
     console.log(chalk.dim('  Run `evalai init --check` to verify.'));
-    console.log(chalk.dim('  Run `evalai init --supabase` to enable cloud sync.'));
+    console.log(chalk.dim('  Run `evalai init --supabase` to configure cloud connection.'));
     console.log('');
   });

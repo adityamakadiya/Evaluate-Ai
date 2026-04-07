@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query, queryOne } from '@/lib/db';
+import { getSupabase } from '@/lib/supabase';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -72,27 +72,19 @@ const POSITIVE_SIGNAL_DEFS: Record<string, { points: number; label: string; hint
 
 // --------------- Helpers ---------------
 
-function parseJson<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try { return JSON.parse(value) as T; } catch { return fallback; }
-}
-
 function findTranscriptFile(sessionId: string): string | null {
   const claudeProjectsDir = join(homedir(), '.claude', 'projects');
   if (!existsSync(claudeProjectsDir)) return null;
 
   try {
-    // Search all project directories for the session transcript
     const projectDirs = readdirSync(claudeProjectsDir, { withFileTypes: true });
     for (const dir of projectDirs) {
       if (!dir.isDirectory()) continue;
       const dirPath = join(claudeProjectsDir, dir.name);
 
-      // Check direct match: <project-dir>/<session-id>.jsonl
       const candidate = join(dirPath, `${sessionId}.jsonl`);
       if (existsSync(candidate)) return candidate;
 
-      // Also check subdirectories (some projects nest deeper)
       try {
         const subEntries = readdirSync(dirPath, { withFileTypes: true });
         for (const sub of subEntries) {
@@ -104,7 +96,6 @@ function findTranscriptFile(sessionId: string): string | null {
     }
   } catch { /* ignore */ }
 
-  // Fallback: try globbing with find-like approach
   try {
     const { execSync } = require('node:child_process');
     const result = execSync(
@@ -130,48 +121,42 @@ function parseTranscriptForTurn(transcriptPath: string, turnNumber: number): {
     let userTurnCount = 0;
     let targetAssistantIndex = -1;
 
-    // Walk through entries: count user PROMPT messages (not tool_result) to find the Nth turn
     const entries: Array<{ message: TranscriptEntry['message'] }> = [];
     for (const line of lines) {
       try {
         const parsed = JSON.parse(line);
-        // Handle both { message: {...} } and direct { role: ... } formats
         const msg = parsed.message ?? parsed;
         if (msg.role) entries.push({ message: msg });
       } catch { continue; }
     }
 
+    let allAssistantIndices: number[] = [];
+
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.message.role === 'user') {
-        // Only count actual user prompts, not tool_result responses
         const content = entry.message.content;
         const isToolResult = Array.isArray(content) && content.length > 0 && content[0]?.type === 'tool_result';
         if (isToolResult) continue;
 
         userTurnCount++;
         if (userTurnCount === turnNumber) {
-          // Collect ALL assistant responses until the next user prompt
-          // (a single turn may involve multiple assistant messages with tool calls)
           const assistantIndices: number[] = [];
           for (let j = i + 1; j < entries.length; j++) {
             const e = entries[j];
             if (e.message.role === 'user') {
-              // Check if this is a tool_result (part of current turn) or new prompt
               const c = e.message.content;
               const isTool = Array.isArray(c) && c.length > 0 && c[0]?.type === 'tool_result';
-              if (!isTool) break; // New user prompt = end of this turn
+              if (!isTool) break;
             }
             if (e.message.role === 'assistant') {
               assistantIndices.push(j);
             }
           }
           if (assistantIndices.length > 0) {
-            targetAssistantIndex = assistantIndices[0]; // Primary for usage data
+            targetAssistantIndex = assistantIndices[0];
           }
-
-          // Store all assistant indices for full response collection
-          (entries as unknown as { _allAssistant?: number[] })._allAssistant = assistantIndices;
+          allAssistantIndices = assistantIndices;
           break;
         }
       }
@@ -179,31 +164,27 @@ function parseTranscriptForTurn(transcriptPath: string, turnNumber: number): {
 
     if (targetAssistantIndex === -1) return null;
 
-    // Collect response text and tool calls from ALL assistant messages in this turn
-    const allAssistantIndices = ((entries as unknown as { _allAssistant?: number[] })._allAssistant) ?? [targetAssistantIndex];
+    const indices = allAssistantIndices.length > 0 ? allAssistantIndices : [targetAssistantIndex];
     const allTextParts: string[] = [];
     const allToolCalls: string[] = [];
     let totalInput = 0, totalOutput = 0, totalCacheRead = 0, totalCacheWrite = 0;
     let model = 'unknown';
 
-    for (const idx of allAssistantIndices) {
+    for (const idx of indices) {
       const msg = entries[idx].message;
       if (msg.model) model = msg.model;
 
-      // Collect text content
       for (const c of (msg.content ?? [])) {
         if (c.type === 'text' && c.text) {
           allTextParts.push(c.text);
         } else if (c.type === 'tool_use' && c.name) {
           allToolCalls.push(c.name);
-          // Include tool call details in response text
           const inputStr = c.input ? JSON.stringify(c.input, null, 2) : '';
           const summary = inputStr.length > 500 ? inputStr.slice(0, 500) + '...' : inputStr;
           allTextParts.push(`**Tool: ${c.name}**\n\`\`\`json\n${summary}\n\`\`\``);
         }
       }
 
-      // Accumulate usage
       if (msg.usage) {
         totalInput += msg.usage.input_tokens ?? 0;
         totalOutput += msg.usage.output_tokens ?? 0;
@@ -213,7 +194,7 @@ function parseTranscriptForTurn(transcriptPath: string, turnNumber: number): {
     }
 
     const responseText = allTextParts.join('\n\n');
-    const toolCalls = [...new Set(allToolCalls)]; // dedupe
+    const toolCalls = [...new Set(allToolCalls)];
 
     const usage = {
       inputTokens: totalInput,
@@ -240,38 +221,32 @@ function parseTranscriptForTurn(transcriptPath: string, turnNumber: number): {
 function generateRewrite(promptText: string, antiPatterns: string[], missingSignals: string[]): string {
   let rewrite = promptText;
 
-  // Remove filler words
   if (antiPatterns.includes('filler_words')) {
     rewrite = rewrite.replace(/\b(please|could you|would you mind|would you kindly|help me)\b\s*/gi, '').trim();
   }
 
-  // Replace unanchored references
   if (antiPatterns.includes('unanchored_ref')) {
     rewrite = rewrite.replace(/^(it|that|the issue|the problem|the error|this)\s/i, '[specify the subject] ');
   }
 
-  // Add file path placeholder if missing
   if (missingSignals.includes('has_file_path') || antiPatterns.includes('no_file_ref')) {
     if (!/[/\\][\w.-]+\.\w{1,5}/.test(rewrite)) {
       rewrite += '\n\nFile: [specify file path, e.g. src/components/Auth.tsx]';
     }
   }
 
-  // Add error message placeholder if missing
   if (missingSignals.includes('has_error_msg') || antiPatterns.includes('paraphrased_error')) {
     if (!/```/.test(rewrite)) {
       rewrite += '\n\nError:\n```\n[paste exact error message here]\n```';
     }
   }
 
-  // Expand too-short prompts
   if (antiPatterns.includes('too_short') || antiPatterns.includes('vague_verb')) {
     if (rewrite.trim().split(/\s+/).length < 15) {
       rewrite += '\n\nContext: [describe what the code currently does]\nExpected: [describe the desired behavior]\nConstraints: [any requirements to preserve]';
     }
   }
 
-  // Add expected output if missing
   if (missingSignals.includes('has_constraints') || antiPatterns.includes('no_expected_output')) {
     if (!/\b(must|should|expected|want|result)\b/i.test(rewrite)) {
       rewrite += '\n\nExpected behavior: [describe what success looks like]';
@@ -288,7 +263,6 @@ function generateImprovement(
   scoreBreakdown: ScoreBreakdown | null,
   promptTokensEst: number | null
 ) {
-  // Parse anti-patterns: handle both string[] and {id, severity, hint}[] formats
   let antiPatternIds: string[] = [];
   let antiPatternObjects: AntiPatternItem[] = [];
 
@@ -307,7 +281,6 @@ function generateImprovement(
     }
   }
 
-  // Build issues list
   const issues = antiPatternObjects.map(ap => {
     const def = ANTI_PATTERN_DEFS[ap.id];
     return {
@@ -319,7 +292,6 @@ function generateImprovement(
     };
   });
 
-  // Check missing positive signals
   const missingSignals: Array<{ id: string; label: string; hint: string; impact: string }> = [];
   const missingSignalIds: string[] = [];
   for (const [id, sig] of Object.entries(POSITIVE_SIGNAL_DEFS)) {
@@ -334,15 +306,12 @@ function generateImprovement(
     }
   }
 
-  // Generate rewrite
   const rewriteExample = generateRewrite(promptText, antiPatternIds, missingSignalIds);
 
-  // Estimate token savings: if prompt is improved, responses tend to be shorter
   const estimatedTokensSaved = Math.round((promptTokensEst ?? 50) * 0.3 + antiPatternObjects.length * 50);
   const pricing = PRICING['claude-sonnet-4-6'];
   const estimatedCostSaved = (estimatedTokensSaved * pricing.output) / 1_000_000;
 
-  // Max possible score
   const maxPossibleScore = 100;
 
   return {
@@ -369,112 +338,92 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid turn number' }, { status: 400 });
   }
 
-  // Fetch turn data
-  const turn = queryOne(
-    `SELECT
-       id,
-       turn_number as turnNumber,
-       prompt_text as promptText,
-       prompt_hash as promptHash,
-       prompt_tokens_est as promptTokensEst,
-       heuristic_score as heuristicScore,
-       llm_score as llmScore,
-       anti_patterns as antiPatterns,
-       score_breakdown as scoreBreakdown,
-       suggestion_text as suggestionText,
-       suggestion_accepted as suggestionAccepted,
-       response_tokens_est as responseTokensEst,
-       tool_calls as toolCalls,
-       latency_ms as latencyMs,
-       was_retry as wasRetry,
-       context_used_pct as contextUsedPct,
-       created_at as createdAt
-     FROM turns
-     WHERE session_id = ? AND turn_number = ?`,
-    [id, turnNumber]
-  );
+  try {
+    const supabase = getSupabase();
 
-  if (!turn) {
-    return NextResponse.json({ error: 'Turn not found' }, { status: 404 });
-  }
+    // Fetch turn data
+    const { data: turn, error: turnErr } = await supabase
+      .from('ai_turns')
+      .select('*')
+      .eq('session_id', id)
+      .eq('turn_number', turnNumber)
+      .single();
 
-  // Fetch session data
-  const session = queryOne(
-    `SELECT
-       id,
-       model,
-       project_dir as projectDir,
-       git_branch as gitBranch,
-       started_at as startedAt,
-       total_turns as totalTurns
-     FROM sessions
-     WHERE id = ?`,
-    [id]
-  );
-
-  if (!session) {
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-  }
-
-  const t = turn as Record<string, unknown>;
-  const s = session as Record<string, unknown>;
-
-  // Parse JSON fields
-  const antiPatterns = parseJson<unknown[]>(t.antiPatterns as string | null, []);
-  const scoreBreakdown = parseJson<ScoreBreakdown | null>(t.scoreBreakdown as string | null, null);
-  const toolCalls = parseJson<string[]>(t.toolCalls as string | null, []);
-
-  const promptText = (t.promptText as string) || '';
-  const score = (t.heuristicScore as number) ?? (t.llmScore as number) ?? 50;
-
-  // Try to find transcript and parse response for this turn
-  let response = null;
-  const transcriptPath = findTranscriptFile(id);
-  if (transcriptPath) {
-    const parsed = parseTranscriptForTurn(transcriptPath, turnNumber);
-    if (parsed) {
-      response = parsed;
+    if (turnErr || !turn) {
+      return NextResponse.json({ error: 'Turn not found' }, { status: 404 });
     }
-  }
 
-  // Generate improvement data
-  const improvement = generateImprovement(
-    promptText,
-    score,
-    antiPatterns,
-    scoreBreakdown,
-    t.promptTokensEst as number | null
-  );
+    // Fetch session data
+    const { data: session, error: sessionErr } = await supabase
+      .from('ai_sessions')
+      .select('id, model, project_dir, git_branch, started_at, total_turns')
+      .eq('id', id)
+      .single();
 
-  return NextResponse.json({
-    turn: {
-      id: t.id,
-      turnNumber: t.turnNumber,
-      promptText: t.promptText,
-      promptHash: t.promptHash,
-      promptTokensEst: t.promptTokensEst,
-      heuristicScore: t.heuristicScore,
-      llmScore: t.llmScore,
+    if (sessionErr || !session) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    }
+
+    // JSONB fields are already parsed from Supabase
+    const antiPatterns = turn.anti_patterns ?? [];
+    const scoreBreakdown = turn.score_breakdown ?? null;
+    const toolCalls = turn.tool_calls ?? [];
+
+    const promptText = (turn.prompt_text as string) || '';
+    const score = (turn.heuristic_score as number) ?? (turn.llm_score as number) ?? 50;
+
+    // Try to find transcript and parse response for this turn
+    let response = null;
+    const transcriptPath = findTranscriptFile(id);
+    if (transcriptPath) {
+      const parsed = parseTranscriptForTurn(transcriptPath, turnNumber);
+      if (parsed) {
+        response = parsed;
+      }
+    }
+
+    // Generate improvement data
+    const improvement = generateImprovement(
+      promptText,
+      score,
       antiPatterns,
-      scoreBreakdown,
-      suggestionText: t.suggestionText,
-      suggestionAccepted: t.suggestionAccepted == null ? null : Boolean(t.suggestionAccepted),
-      responseTokensEst: t.responseTokensEst,
-      toolCalls,
-      latencyMs: t.latencyMs,
-      wasRetry: Boolean(t.wasRetry),
-      contextUsedPct: t.contextUsedPct,
-      createdAt: t.createdAt,
-    },
-    session: {
-      id: s.id,
-      model: s.model,
-      projectDir: s.projectDir,
-      gitBranch: s.gitBranch,
-      startedAt: s.startedAt,
-      totalTurns: s.totalTurns,
-    },
-    response,
-    improvement,
-  });
+      scoreBreakdown as ScoreBreakdown | null,
+      turn.prompt_tokens_est as number | null
+    );
+
+    return NextResponse.json({
+      turn: {
+        id: turn.id,
+        turnNumber: turn.turn_number,
+        promptText: turn.prompt_text,
+        promptHash: turn.prompt_hash,
+        promptTokensEst: turn.prompt_tokens_est,
+        heuristicScore: turn.heuristic_score,
+        llmScore: turn.llm_score,
+        antiPatterns,
+        scoreBreakdown,
+        suggestionText: turn.suggestion_text,
+        suggestionAccepted: turn.suggestion_accepted == null ? null : Boolean(turn.suggestion_accepted),
+        responseTokensEst: turn.response_tokens_est,
+        toolCalls,
+        latencyMs: turn.latency_ms,
+        wasRetry: Boolean(turn.was_retry),
+        contextUsedPct: turn.context_used_pct,
+        createdAt: turn.created_at,
+      },
+      session: {
+        id: session.id,
+        model: session.model,
+        projectDir: session.project_dir,
+        gitBranch: session.git_branch,
+        startedAt: session.started_at,
+        totalTurns: session.total_turns,
+      },
+      response,
+      improvement,
+    });
+  } catch (err) {
+    console.error('Turn detail API error:', err);
+    return NextResponse.json({ error: 'Failed to load turn' }, { status: 500 });
+  }
 }

@@ -1,17 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query, execute } from '@/lib/db';
+import { getSupabase } from '@/lib/supabase';
 
 export async function GET() {
-  const rows = query<{ key: string; value: string; updated_at: string }>(
-    'SELECT key, value, updated_at FROM config ORDER BY key'
-  );
+  try {
+    const supabase = getSupabase();
 
-  const config: Record<string, { value: string; updatedAt: string }> = {};
-  for (const row of rows) {
-    config[row.key] = { value: row.value, updatedAt: row.updated_at };
+    const { data, error } = await supabase
+      .from('config')
+      .select('key, value, updated_at')
+      .order('key');
+
+    if (error) {
+      console.error('Config GET error:', error);
+      return NextResponse.json({});
+    }
+
+    const config: Record<string, { value: string; updatedAt: string }> = {};
+    for (const row of data ?? []) {
+      config[row.key] = { value: row.value, updatedAt: row.updated_at };
+    }
+
+    return NextResponse.json(config);
+  } catch (err) {
+    console.error('Config API error:', err);
+    return NextResponse.json({});
   }
-
-  return NextResponse.json(config);
 }
 
 export async function PUT(request: NextRequest) {
@@ -31,18 +44,31 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  const now = new Date().toISOString();
-  const result = execute(
-    'INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
-    [key, value, now]
-  );
+  try {
+    const supabase = getSupabase();
+    const now = new Date().toISOString();
 
-  if (!result) {
+    const { error } = await supabase
+      .from('config')
+      .upsert(
+        { key, value, updated_at: now },
+        { onConflict: 'team_id,key' }
+      );
+
+    if (error) {
+      console.error('Config PUT error:', error);
+      return NextResponse.json(
+        { error: 'Database write failed' },
+        { status: 503 }
+      );
+    }
+
+    return NextResponse.json({ key, value, updatedAt: now });
+  } catch (err) {
+    console.error('Config PUT error:', err);
     return NextResponse.json(
       { error: 'Database not available' },
       { status: 503 }
     );
   }
-
-  return NextResponse.json({ key, value, updatedAt: now });
 }

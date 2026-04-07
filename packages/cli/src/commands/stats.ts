@@ -1,8 +1,14 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { getDb, sessions, turns } from 'evaluateai-core';
-import { gte } from 'drizzle-orm';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { printHeader, formatCost, formatTokens, formatScore, formatTrend } from '../utils/display.js';
+
+function getSupabase(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
 /**
  * Get the start-of-day ISO string for N days ago.
@@ -24,14 +30,14 @@ interface PeriodStats {
   antiPatterns: Record<string, number>;
 }
 
-function queryPeriodStats(since: string): PeriodStats {
-  const db = getDb();
+async function queryPeriodStats(supabase: SupabaseClient, since: string): Promise<PeriodStats> {
+  const { data: sessRows } = await supabase
+    .from('ai_sessions')
+    .select('*')
+    .gte('started_at', since);
 
-  const sessRows = db.select().from(sessions)
-    .where(gte(sessions.startedAt, since))
-    .all();
-
-  const sessionCount = sessRows.length;
+  const rows = sessRows ?? [];
+  const sessionCount = rows.length;
   let totalTurns = 0;
   let totalTokens = 0;
   let totalCost = 0;
@@ -40,37 +46,37 @@ function queryPeriodStats(since: string): PeriodStats {
   let effSum = 0;
   let effCount = 0;
 
-  for (const s of sessRows) {
-    totalTurns += s.totalTurns;
-    totalTokens += s.totalInputTokens + s.totalOutputTokens;
-    totalCost += s.totalCostUsd;
-    if (s.avgPromptScore != null) {
-      scoreSum += s.avgPromptScore;
+  for (const s of rows) {
+    totalTurns += s.total_turns ?? 0;
+    totalTokens += (s.total_input_tokens ?? 0) + (s.total_output_tokens ?? 0);
+    totalCost += s.total_cost_usd ?? 0;
+    if (s.avg_prompt_score != null) {
+      scoreSum += s.avg_prompt_score;
       scoreCount++;
     }
-    if (s.efficiencyScore != null) {
-      effSum += s.efficiencyScore;
+    if (s.efficiency_score != null) {
+      effSum += s.efficiency_score;
       effCount++;
     }
   }
 
   // Gather anti-patterns from turns
-  const sessionIds = sessRows.map(s => s.id);
   const antiPatterns: Record<string, number> = {};
 
-  if (sessionIds.length > 0) {
-    const turnRows = db.select({ antiPatterns: turns.antiPatterns })
-      .from(turns)
-      .where(gte(turns.createdAt, since))
-      .all();
+  if (rows.length > 0) {
+    const { data: turnRows } = await supabase
+      .from('ai_turns')
+      .select('anti_patterns')
+      .gte('created_at', since);
 
-    for (const t of turnRows) {
-      if (!t.antiPatterns) continue;
+    for (const t of (turnRows ?? [])) {
+      if (!t.anti_patterns) continue;
       try {
-        const patterns: unknown = JSON.parse(t.antiPatterns);
+        const patterns: unknown = typeof t.anti_patterns === 'string'
+          ? JSON.parse(t.anti_patterns)
+          : t.anti_patterns;
         if (Array.isArray(patterns)) {
           for (const p of patterns) {
-            // Patterns stored as string[] (e.g. ["vague_verb"]) or {id}[]
             const id = typeof p === 'string' ? p : (p as { id?: string })?.id;
             if (id) {
               antiPatterns[id] = (antiPatterns[id] ?? 0) + 1;
@@ -146,7 +152,14 @@ export const statsCommand = new Command('stats')
   .option('--week', 'Show this week\'s stats')
   .option('--month', 'Show this month\'s stats')
   .option('--compare', 'Compare with previous period')
-  .action((opts: { week?: boolean; month?: boolean; compare?: boolean }) => {
+  .action(async (opts: { week?: boolean; month?: boolean; compare?: boolean }) => {
+    const supabase = getSupabase();
+    if (!supabase) {
+      console.log(chalk.red('  Supabase not configured.'));
+      console.log(chalk.gray('  Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables.'));
+      return;
+    }
+
     let periodDays: number;
     let label: string;
 
@@ -162,12 +175,12 @@ export const statsCommand = new Command('stats')
     }
 
     const since = daysAgo(periodDays === 1 ? 0 : periodDays);
-    const stats = queryPeriodStats(since);
+    const stats = await queryPeriodStats(supabase, since);
 
     let prev: PeriodStats | undefined;
     if (opts.compare) {
       const prevSince = daysAgo(periodDays * 2);
-      prev = queryPeriodStats(prevSince);
+      prev = await queryPeriodStats(supabase, prevSince);
       // Subtract current period from the "since 2x ago" to get only previous period
       prev = {
         sessionCount: prev.sessionCount - stats.sessionCount,

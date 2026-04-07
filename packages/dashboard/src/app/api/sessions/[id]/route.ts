@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query, queryOne } from '@/lib/db';
+import { getSupabase } from '@/lib/supabase';
 
 export async function GET(
   _request: NextRequest,
@@ -7,124 +7,108 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  const session = queryOne(
-    `SELECT
-       id,
-       tool,
-       integration,
-       model,
-       project_dir as projectDir,
-       git_repo as gitRepo,
-       git_branch as gitBranch,
-       started_at as startedAt,
-       ended_at as endedAt,
-       total_turns as totalTurns,
-       total_input_tokens as totalInputTokens,
-       total_output_tokens as totalOutputTokens,
-       total_cost_usd as totalCostUsd,
-       total_tool_calls as totalToolCalls,
-       files_changed as filesChanged,
-       avg_prompt_score as avgPromptScore,
-       efficiency_score as efficiencyScore,
-       token_waste_ratio as tokenWasteRatio,
-       context_peak_pct as contextPeakPct,
-       analysis,
-       analyzed_at as analyzedAt
-     FROM sessions
-     WHERE id = ?`,
-    [id]
-  );
-
-  if (!session) {
-    return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-  }
-
-  // Parse analysis JSON if present
-  let parsedAnalysis = null;
-  if (typeof (session as Record<string, unknown>).analysis === 'string') {
-    try {
-      parsedAnalysis = JSON.parse((session as Record<string, unknown>).analysis as string);
-    } catch {
-      parsedAnalysis = null;
-    }
-  }
-
-  const turns = query(
-    `SELECT
-       id,
-       turn_number as turnNumber,
-       prompt_text as promptText,
-       prompt_hash as promptHash,
-       prompt_tokens_est as promptTokensEst,
-       heuristic_score as heuristicScore,
-       anti_patterns as antiPatterns,
-       llm_score as llmScore,
-       score_breakdown as scoreBreakdown,
-       suggestion_text as suggestionText,
-       suggestion_accepted as suggestionAccepted,
-       tokens_saved_est as tokensSavedEst,
-       response_tokens_est as responseTokensEst,
-       tool_calls as toolCalls,
-       latency_ms as latencyMs,
-       was_retry as wasRetry,
-       context_used_pct as contextUsedPct,
-       created_at as createdAt
-     FROM turns
-     WHERE session_id = ?
-     ORDER BY turn_number ASC`,
-    [id]
-  );
-
-  // Parse JSON fields in turns
-  const parsedTurns = turns.map((t) => {
-    const turn = t as Record<string, unknown>;
-    return {
-      ...turn,
-      antiPatterns: parseJson(turn.antiPatterns as string | null),
-      scoreBreakdown: parseJson(turn.scoreBreakdown as string | null),
-      toolCalls: parseJson(turn.toolCalls as string | null),
-      wasRetry: Boolean(turn.wasRetry),
-      suggestionAccepted: turn.suggestionAccepted == null ? null : Boolean(turn.suggestionAccepted),
-    };
-  });
-
-  const toolEvents = query(
-    `SELECT
-       id,
-       session_id as sessionId,
-       turn_id as turnId,
-       tool_name as toolName,
-       tool_input_summary as toolInputSummary,
-       success,
-       execution_ms as executionMs,
-       created_at as createdAt
-     FROM tool_events
-     WHERE session_id = ?
-     ORDER BY created_at ASC`,
-    [id]
-  );
-
-  const parsedToolEvents = toolEvents.map((e) => {
-    const evt = e as Record<string, unknown>;
-    return {
-      ...evt,
-      success: evt.success == null ? null : Boolean(evt.success),
-    };
-  });
-
-  return NextResponse.json({
-    session: { ...session, analysis: undefined, analyzedAt: (session as Record<string, unknown>).analyzedAt },
-    turns: parsedTurns,
-    toolEvents: parsedToolEvents,
-    analysis: parsedAnalysis,
-  });
-}
-
-function parseJson(value: string | null | undefined): unknown {
-  if (!value) return null;
   try {
-    return JSON.parse(value);
-  } catch {
-    return null;
+    const supabase = getSupabase();
+
+    const { data: session, error: sessionErr } = await supabase
+      .from('ai_sessions')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (sessionErr || !session) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+    }
+
+    const [{ data: turnsData }, { data: toolEventsData }] = await Promise.all([
+      supabase
+        .from('ai_turns')
+        .select('*')
+        .eq('session_id', id)
+        .order('turn_number', { ascending: true }),
+      supabase
+        .from('ai_tool_events')
+        .select('*')
+        .eq('session_id', id)
+        .order('created_at', { ascending: true }),
+    ]);
+
+    // Parse analysis — it's JSONB in Supabase so it may already be an object
+    let parsedAnalysis = null;
+    if (session.analysis != null) {
+      if (typeof session.analysis === 'string') {
+        try { parsedAnalysis = JSON.parse(session.analysis); } catch { parsedAnalysis = null; }
+      } else {
+        parsedAnalysis = session.analysis;
+      }
+    }
+
+    // Transform session to camelCase
+    const sessionOut = {
+      id: session.id,
+      tool: session.tool,
+      integration: session.integration,
+      model: session.model,
+      projectDir: session.project_dir,
+      gitRepo: session.git_repo,
+      gitBranch: session.git_branch,
+      startedAt: session.started_at,
+      endedAt: session.ended_at,
+      totalTurns: session.total_turns,
+      totalInputTokens: session.total_input_tokens,
+      totalOutputTokens: session.total_output_tokens,
+      totalCostUsd: session.total_cost_usd,
+      totalToolCalls: session.total_tool_calls,
+      filesChanged: session.files_changed,
+      avgPromptScore: session.avg_prompt_score,
+      efficiencyScore: session.efficiency_score,
+      tokenWasteRatio: session.token_waste_ratio,
+      contextPeakPct: session.context_peak_pct,
+      analyzedAt: session.analyzed_at,
+    };
+
+    // Transform turns to camelCase, parse JSONB fields
+    const parsedTurns = (turnsData ?? []).map(t => ({
+      id: t.id,
+      turnNumber: t.turn_number,
+      promptText: t.prompt_text,
+      promptHash: t.prompt_hash,
+      promptTokensEst: t.prompt_tokens_est,
+      heuristicScore: t.heuristic_score,
+      antiPatterns: t.anti_patterns ?? [],
+      llmScore: t.llm_score,
+      scoreBreakdown: t.score_breakdown ?? null,
+      suggestionText: t.suggestion_text,
+      suggestionAccepted: t.suggestion_accepted == null ? null : Boolean(t.suggestion_accepted),
+      tokensSavedEst: t.tokens_saved_est,
+      responseTokensEst: t.response_tokens_est,
+      toolCalls: t.tool_calls ?? [],
+      latencyMs: t.latency_ms,
+      wasRetry: Boolean(t.was_retry),
+      contextUsedPct: t.context_used_pct,
+      createdAt: t.created_at,
+    }));
+
+    // Transform tool events to camelCase
+    const parsedToolEvents = (toolEventsData ?? []).map(e => ({
+      id: e.id,
+      sessionId: e.session_id,
+      turnId: e.turn_id,
+      toolName: e.tool_name,
+      toolInputSummary: e.tool_input_summary,
+      success: e.success == null ? null : Boolean(e.success),
+      executionMs: e.execution_ms,
+      createdAt: e.created_at,
+    }));
+
+    return NextResponse.json({
+      session: sessionOut,
+      turns: parsedTurns,
+      toolEvents: parsedToolEvents,
+      analysis: parsedAnalysis,
+    });
+  } catch (err) {
+    console.error('Session detail API error:', err);
+    return NextResponse.json({ error: 'Failed to load session' }, { status: 500 });
   }
 }

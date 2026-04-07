@@ -15,15 +15,16 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "evaluateai-core": "workspace:*",
+    "@supabase/supabase-js": "^2.49.1",
     "chalk": "^5.4.1",
     "cli-table3": "^0.6.5",
     "commander": "^13.1.0",
     "dotenv": "^17.4.0",
-    "drizzle-orm": "^0.45.2",
+    "evaluateai-core": "workspace:*",
     "ulid": "^2.4.0"
   },
   "devDependencies": {
+    "@types/node": "^20.19.39",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   }

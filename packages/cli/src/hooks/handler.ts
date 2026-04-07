@@ -1,9 +1,22 @@
 // ============================================================
 // Shared handler utilities for Claude Code hooks
+// All data writes go directly to Supabase — no local SQLite.
 // ============================================================
 
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+// ── Supabase client ──────────────────────────────────────────
+
+function getSupabase(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+// ── Shared utilities ─────────────────────────────────────────
 
 /**
  * Read JSON from stdin (Claude Code sends hook data as JSON on stdin).
@@ -96,6 +109,8 @@ export function safeExit(code: number = 0): never {
   }
 }
 
+// ── Hook event router ────────────────────────────────────────
+
 /**
  * Route a hook event to the correct handler.
  * Called from bin/evalai.js when `evalai hook <event>` runs.
@@ -104,13 +119,9 @@ export function safeExit(code: number = 0): never {
 export async function handleHookEvent(payload: Record<string, unknown>): Promise<void> {
   const event = String(payload.type || '');
 
-  // Dynamically import handlers to keep startup fast
   switch (event) {
     case 'session-start':
     case 'SessionStart': {
-      const { handleSessionStart } = await import('./session-start.js');
-      // Re-inject payload into stdin is not needed — handler reads from payload
-      // We need to adapt: set process.env with payload data and call handler
       await handleSessionStartWithPayload(payload);
       break;
     }
@@ -145,33 +156,46 @@ export async function handleHookEvent(payload: Record<string, unknown>): Promise
   }
 }
 
-// Payload-based handlers that bypass stdin reading
-// (since bin/evalai.js already parsed stdin)
+// ── Payload-based handlers (Supabase) ────────────────────────
 
 async function handleSessionStartWithPayload(payload: Record<string, unknown>): Promise<void> {
   try {
-    const { initDb, sessions } = await import('evaluateai-core');
-    const db = initDb();
-    const { getGitInfo } = await import('./handler.js');
+    const supabase = getSupabase();
+    if (!supabase) return;
+
     const cwd = String(payload.cwd || process.cwd());
     const { gitRepo, gitBranch } = getGitInfo(cwd);
 
-    db.insert(sessions).values({
-      id: String(payload.session_id || `session-${Date.now()}`),
+    const sessionId = String(payload.session_id || `session-${Date.now()}`);
+    const now = payload.timestamp ? String(payload.timestamp) : new Date().toISOString();
+
+    await supabase.from('ai_sessions').upsert({
+      id: sessionId,
       tool: 'claude-code',
-      integration: 'hooks',
-      projectDir: cwd,
-      gitRepo,
-      gitBranch,
       model: payload.model ? String(payload.model) : null,
-      startedAt: payload.timestamp ? String(payload.timestamp) : new Date().toISOString(),
-      totalTurns: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCostUsd: 0,
-      totalToolCalls: 0,
-      filesChanged: 0,
-    }).run();
+      project_dir: cwd,
+      git_repo: gitRepo,
+      git_branch: gitBranch,
+      started_at: now,
+      total_turns: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cost_usd: 0,
+      total_tool_calls: 0,
+      files_changed: 0,
+    }, { onConflict: 'id' });
+
+    // Insert activity timeline event (fire-and-forget)
+    supabase.from('activity_timeline').insert({
+      event_type: 'ai_session_start',
+      title: 'AI session started',
+      description: `Claude Code session in ${cwd.split('/').pop() || cwd}`,
+      metadata: { session_id: sessionId, project_dir: cwd, git_branch: gitBranch },
+      source_id: sessionId,
+      source_table: 'ai_sessions',
+      is_ai_assisted: true,
+      occurred_at: now,
+    }).then(() => {}, () => {});
   } catch {
     // Never fail
   }
@@ -179,70 +203,114 @@ async function handleSessionStartWithPayload(payload: Record<string, unknown>): 
 
 async function handlePromptSubmitWithPayload(payload: Record<string, unknown>): Promise<void> {
   try {
-    const { initDb, sessions, turns, scoreHeuristic, estimateTokens, scoreLLMAndUpdate } = await import('evaluateai-core');
-    const { hashText } = await import('./handler.js');
-    const { ulid } = await import('ulid');
-    const { eq, sql, desc } = await import('drizzle-orm');
+    const supabase = getSupabase();
+    if (!supabase) return;
 
-    const db = initDb();
+    const { scoreHeuristic, estimateTokens, scoreLLMAndUpdate } = await import('evaluateai-core');
+    const { ulid } = await import('ulid');
+
     const sessionId = String(payload.session_id || '');
     const promptText = String(payload.prompt || '');
     const cwd = String(payload.cwd || process.cwd());
 
     if (!sessionId || !promptText) return;
 
-    // Get turn count
-    const session = db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
-    const turnNumber = (session?.totalTurns ?? 0) + 1;
+    // Get current session to determine turn count
+    const { data: session } = await supabase
+      .from('ai_sessions')
+      .select('total_turns')
+      .eq('id', sessionId)
+      .single();
+
+    const turnNumber = (session?.total_turns ?? 0) + 1;
 
     // Score
     const promptHash = hashText(promptText);
     const tokenEst = estimateTokens(promptText);
 
-    // Check retry
-    const priorHashes = db.select({ hash: turns.promptHash })
-      .from(turns)
-      .where(eq(turns.sessionId, sessionId))
-      .all()
-      .map(r => r.hash);
+    // Check for retries by looking at prior prompt hashes
+    const { data: priorTurns } = await supabase
+      .from('ai_turns')
+      .select('prompt_hash, prompt_text')
+      .eq('session_id', sessionId);
+
+    const priorHashes = (priorTurns ?? []).map(r => r.prompt_hash);
     const wasRetry = priorHashes.includes(promptHash);
 
-    // Get prior prompts for retry detection in heuristic
-    const priorPrompts = db.select({ text: turns.promptText })
-      .from(turns)
-      .where(eq(turns.sessionId, sessionId))
-      .all()
-      .map(r => r.text)
+    const priorPrompts = (priorTurns ?? [])
+      .map(r => r.prompt_text)
       .filter((t): t is string => t !== null);
 
     const heuristic = scoreHeuristic(promptText, priorPrompts);
 
     const turnId = ulid();
-    db.insert(turns).values({
+    await supabase.from('ai_turns').insert({
       id: turnId,
-      sessionId,
-      turnNumber,
-      promptText,
-      promptHash,
-      promptTokensEst: tokenEst,
-      heuristicScore: heuristic.score,
-      antiPatterns: JSON.stringify(heuristic.antiPatterns.map(a => a.id)),
-      wasRetry,
-      createdAt: new Date().toISOString(),
-    }).run();
+      session_id: sessionId,
+      turn_number: turnNumber,
+      prompt_text: promptText,
+      prompt_hash: promptHash,
+      prompt_tokens_est: tokenEst,
+      heuristic_score: heuristic.score,
+      anti_patterns: JSON.stringify(heuristic.antiPatterns.map(a => a.id)),
+      intent: heuristic.intent ?? null,
+      was_retry: wasRetry,
+      created_at: new Date().toISOString(),
+    });
 
-    // Update session
-    db.update(sessions)
-      .set({
-        totalTurns: sql`${sessions.totalTurns} + 1`,
-        totalInputTokens: sql`${sessions.totalInputTokens} + ${tokenEst}`,
+    // Update session turn count and tokens
+    await supabase
+      .from('ai_sessions')
+      .update({
+        total_turns: turnNumber,
+        total_input_tokens: (session?.total_turns != null)
+          ? undefined  // will use RPC below
+          : tokenEst,
       })
-      .where(eq(sessions.id, sessionId))
-      .run();
+      .eq('id', sessionId);
+
+    // Increment total_input_tokens via RPC-style update
+    await supabase.rpc('increment_session_input_tokens', {
+      sid: sessionId,
+      tokens: tokenEst,
+    }).then(() => {}, async () => {
+      // Fallback: re-read and set if RPC not available
+      try {
+        const { data: s } = await supabase!
+          .from('ai_sessions')
+          .select('total_input_tokens, total_turns')
+          .eq('id', sessionId)
+          .single();
+        if (s) {
+          await supabase!.from('ai_sessions').update({
+            total_turns: turnNumber,
+            total_input_tokens: (s.total_input_tokens ?? 0) + tokenEst,
+          }).eq('id', sessionId);
+        }
+      } catch {
+        // ignore
+      }
+    });
+
+    // Insert activity timeline event
+    supabase.from('activity_timeline').insert({
+      event_type: 'ai_prompt',
+      title: 'AI prompt submitted',
+      description: promptText.length > 100 ? promptText.slice(0, 97) + '...' : promptText,
+      metadata: { session_id: sessionId, turn_id: turnId, score: heuristic.score, intent: heuristic.intent },
+      source_id: turnId,
+      source_table: 'ai_turns',
+      is_ai_assisted: true,
+      occurred_at: new Date().toISOString(),
+    }).then(() => {}, () => {});
 
     // Show suggestion if score is low
-    const configRow = db.select().from((await import('evaluateai-core')).config)
-      .where(eq((await import('evaluateai-core')).config.key, 'threshold')).get();
+    const { data: configRow } = await supabase
+      .from('config')
+      .select('value')
+      .eq('key', 'threshold')
+      .maybeSingle();
+
     const threshold = parseInt(configRow?.value ?? '50', 10);
 
     if (heuristic.score < threshold && heuristic.quickTip) {
@@ -259,26 +327,35 @@ async function handlePromptSubmitWithPayload(payload: Record<string, unknown>): 
 
 async function handlePreToolWithPayload(payload: Record<string, unknown>): Promise<void> {
   try {
-    const { initDb, sessions, toolEvents } = await import('evaluateai-core');
-    const { ulid } = await import('ulid');
-    const { eq, sql } = await import('drizzle-orm');
+    const supabase = getSupabase();
+    if (!supabase) return;
 
-    const db = initDb();
+    const { ulid } = await import('ulid');
+
     const sessionId = String(payload.session_id || '');
     if (!sessionId) return;
 
-    db.insert(toolEvents).values({
-      id: ulid(),
-      sessionId,
-      toolName: String(payload.tool_name || 'unknown'),
-      toolInputSummary: payload.tool_input ? String(payload.tool_input).substring(0, 200) : null,
-      createdAt: new Date().toISOString(),
-    }).run();
+    const eventId = ulid();
+    await supabase.from('ai_tool_events').insert({
+      id: eventId,
+      session_id: sessionId,
+      tool_name: String(payload.tool_name || 'unknown'),
+      tool_input_summary: payload.tool_input ? String(payload.tool_input).substring(0, 200) : null,
+      created_at: new Date().toISOString(),
+    });
 
-    db.update(sessions)
-      .set({ totalToolCalls: sql`${sessions.totalToolCalls} + 1` })
-      .where(eq(sessions.id, sessionId))
-      .run();
+    // Increment tool call count — read-then-write fallback
+    const { data: s } = await supabase
+      .from('ai_sessions')
+      .select('total_tool_calls')
+      .eq('id', sessionId)
+      .single();
+
+    if (s) {
+      await supabase.from('ai_sessions').update({
+        total_tool_calls: (s.total_tool_calls ?? 0) + 1,
+      }).eq('id', sessionId);
+    }
   } catch {
     // Never fail
   }
@@ -286,38 +363,42 @@ async function handlePreToolWithPayload(payload: Record<string, unknown>): Promi
 
 async function handlePostToolWithPayload(payload: Record<string, unknown>): Promise<void> {
   try {
-    const { initDb, sessions, toolEvents } = await import('evaluateai-core');
-    const { eq, desc, sql } = await import('drizzle-orm');
+    const supabase = getSupabase();
+    if (!supabase) return;
 
-    const db = initDb();
     const sessionId = String(payload.session_id || '');
     const toolName = String(payload.tool_name || '');
     if (!sessionId) return;
 
-    // Find most recent matching tool event
-    const recent = db.select()
-      .from(toolEvents)
-      .where(eq(toolEvents.sessionId, sessionId))
-      .orderBy(desc(toolEvents.createdAt))
+    // Find most recent tool event for this session
+    const { data: recent } = await supabase
+      .from('ai_tool_events')
+      .select('id')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: false })
       .limit(1)
-      .get();
+      .single();
 
     if (recent) {
-      db.update(toolEvents)
-        .set({
-          success: payload.success === true,
-          executionMs: typeof payload.execution_ms === 'number' ? payload.execution_ms : null,
-        })
-        .where(eq(toolEvents.id, recent.id))
-        .run();
+      await supabase.from('ai_tool_events').update({
+        success: payload.success === true,
+        execution_ms: typeof payload.execution_ms === 'number' ? payload.execution_ms : null,
+      }).eq('id', recent.id);
     }
 
     // Track file changes
     if ((toolName === 'Edit' || toolName === 'Write') && payload.success === true) {
-      db.update(sessions)
-        .set({ filesChanged: sql`${sessions.filesChanged} + 1` })
-        .where(eq(sessions.id, sessionId))
-        .run();
+      const { data: s } = await supabase
+        .from('ai_sessions')
+        .select('files_changed')
+        .eq('id', sessionId)
+        .single();
+
+      if (s) {
+        await supabase.from('ai_sessions').update({
+          files_changed: (s.files_changed ?? 0) + 1,
+        }).eq('id', sessionId);
+      }
     }
   } catch {
     // Never fail
@@ -326,19 +407,22 @@ async function handlePostToolWithPayload(payload: Record<string, unknown>): Prom
 
 async function handleStopWithPayload(payload: Record<string, unknown>): Promise<void> {
   try {
-    const { initDb, turns, sessions, getLatestResponse } = await import('evaluateai-core');
-    const { eq, desc, sql } = await import('drizzle-orm');
+    const supabase = getSupabase();
+    if (!supabase) return;
 
-    const db = initDb();
+    const { getLatestResponse, calculateCost } = await import('evaluateai-core');
+
     const sessionId = String(payload.session_id || '');
     if (!sessionId) return;
 
-    const latestTurn = db.select()
-      .from(turns)
-      .where(eq(turns.sessionId, sessionId))
-      .orderBy(desc(turns.turnNumber))
+    // Get the latest turn for this session
+    const { data: latestTurn } = await supabase
+      .from('ai_turns')
+      .select('id, prompt_tokens_est')
+      .eq('session_id', sessionId)
+      .order('turn_number', { ascending: false })
       .limit(1)
-      .get();
+      .single();
 
     if (!latestTurn) return;
 
@@ -380,40 +464,39 @@ async function handleStopWithPayload(payload: Record<string, unknown>): Promise<
     if (responseTokens === null) {
       responseTokens = typeof payload.response_tokens === 'number' ? payload.response_tokens : null;
       if (responseTokens) {
-        const session = db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
-        model = session?.model || 'claude-sonnet-4-6';
-        const { calculateCost } = await import('evaluateai-core');
-        turnCost = calculateCost(latestTurn.promptTokensEst || 0, responseTokens, model);
+        const { data: sess } = await supabase
+          .from('ai_sessions')
+          .select('model')
+          .eq('id', sessionId)
+          .single();
+        model = sess?.model || 'claude-sonnet-4-6';
+        turnCost = calculateCost(latestTurn.prompt_tokens_est || 0, responseTokens, model);
       }
     }
 
     const latencyMs = typeof payload.latency_ms === 'number' ? payload.latency_ms : null;
 
     // Update turn with exact data
-    db.update(turns)
-      .set({
-        responseTokensEst: responseTokens,
-        latencyMs,
-      })
-      .where(eq(turns.id, latestTurn.id))
-      .run();
+    await supabase.from('ai_turns').update({
+      response_tokens_est: responseTokens,
+      latency_ms: latencyMs,
+    }).eq('id', latestTurn.id);
 
     // Update session with exact cost
     if (responseTokens) {
-      db.update(sessions)
-        .set({
-          model: model,
-          totalOutputTokens: sql`${sessions.totalOutputTokens} + ${responseTokens}`,
-          totalCostUsd: sql`${sessions.totalCostUsd} + ${turnCost}`,
-        })
-        .where(eq(sessions.id, sessionId))
-        .run();
-    }
+      const { data: s } = await supabase
+        .from('ai_sessions')
+        .select('total_output_tokens, total_cost_usd')
+        .eq('id', sessionId)
+        .single();
 
-    // Fire-and-forget: sync to Supabase
-    const { syncToSupabase, isSupabaseConfigured } = await import('evaluateai-core');
-    if (isSupabaseConfigured()) {
-      syncToSupabase().catch(() => {});
+      if (s) {
+        await supabase.from('ai_sessions').update({
+          model,
+          total_output_tokens: (s.total_output_tokens ?? 0) + responseTokens,
+          total_cost_usd: (s.total_cost_usd ?? 0) + turnCost,
+        }).eq('id', sessionId);
+      }
     }
   } catch {
     // Never fail
@@ -422,10 +505,11 @@ async function handleStopWithPayload(payload: Record<string, unknown>): Promise<
 
 async function handleSessionEndWithPayload(payload: Record<string, unknown>): Promise<void> {
   try {
-    const { initDb, sessions, turns, calculateEfficiency, analyzeSession, getSessionSummary } = await import('evaluateai-core');
-    const { eq } = await import('drizzle-orm');
+    const supabase = getSupabase();
+    if (!supabase) return;
 
-    const db = initDb();
+    const { calculateEfficiency, getSessionSummary, analyzeSession } = await import('evaluateai-core');
+
     const sessionId = String(payload.session_id || '');
     if (!sessionId) return;
 
@@ -437,57 +521,121 @@ async function handleSessionEndWithPayload(payload: Record<string, unknown>): Pr
       const summary = getSessionSummary(transcriptPath);
       if (summary) {
         // Override estimated data with exact transcript data
-        db.update(sessions)
-          .set({
-            model: summary.model,
-            totalInputTokens: summary.totalInputTokens,
-            totalOutputTokens: summary.totalOutputTokens,
-            totalCostUsd: summary.totalCostUsd,
-          })
-          .where(eq(sessions.id, sessionId))
-          .run();
+        await supabase.from('ai_sessions').update({
+          model: summary.model,
+          total_input_tokens: summary.totalInputTokens,
+          total_output_tokens: summary.totalOutputTokens,
+          total_cost_usd: summary.totalCostUsd,
+        }).eq('id', sessionId);
       }
     }
 
     // Re-read session with updated data
-    const session = db.select().from(sessions).where(eq(sessions.id, sessionId)).get();
+    const { data: session } = await supabase
+      .from('ai_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .single();
+
     if (!session) return;
 
-    const sessionTurns = db.select().from(turns).where(eq(turns.sessionId, sessionId)).all();
+    // Get all turns for scoring
+    const { data: sessionTurns } = await supabase
+      .from('ai_turns')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('turn_number', { ascending: true });
 
-    // Calculate scores
-    const scores = sessionTurns
-      .map(t => t.heuristicScore ?? t.llmScore)
+    const turnsArr = sessionTurns ?? [];
+
+    // Calculate average scores
+    const scores = turnsArr
+      .map(t => t.heuristic_score ?? t.llm_score)
       .filter((s): s is number => s !== null);
     const avgScore = scores.length > 0
       ? scores.reduce((a, b) => a + b, 0) / scores.length
       : null;
 
-    // Calculate efficiency
+    // Calculate efficiency — map Supabase row to the shape expected by calculateEfficiency
+    const sessionForCalc = {
+      id: session.id,
+      tool: session.tool,
+      integration: 'hooks' as const,
+      projectDir: session.project_dir,
+      gitRepo: session.git_repo,
+      gitBranch: session.git_branch,
+      model: session.model,
+      startedAt: session.started_at,
+      endedAt: session.ended_at,
+      totalTurns: session.total_turns,
+      totalInputTokens: session.total_input_tokens,
+      totalOutputTokens: session.total_output_tokens,
+      totalCostUsd: session.total_cost_usd,
+      totalToolCalls: session.total_tool_calls,
+      filesChanged: session.files_changed,
+      avgPromptScore: session.avg_prompt_score,
+      efficiencyScore: session.efficiency_score,
+      tokenWasteRatio: session.token_waste_ratio,
+      contextPeakPct: session.context_peak_pct,
+      analysis: session.analysis ? JSON.stringify(session.analysis) : null,
+      analyzedAt: session.analyzed_at,
+    };
+
+    const turnsForCalc = turnsArr.map(t => ({
+      id: t.id,
+      sessionId: t.session_id,
+      turnNumber: t.turn_number,
+      promptText: t.prompt_text,
+      promptHash: t.prompt_hash,
+      promptTokensEst: t.prompt_tokens_est,
+      heuristicScore: t.heuristic_score,
+      antiPatterns: t.anti_patterns ? (typeof t.anti_patterns === 'string' ? t.anti_patterns : JSON.stringify(t.anti_patterns)) : null,
+      llmScore: t.llm_score,
+      scoreBreakdown: t.score_breakdown ? (typeof t.score_breakdown === 'string' ? t.score_breakdown : JSON.stringify(t.score_breakdown)) : null,
+      suggestionText: t.suggestion_text,
+      suggestionAccepted: t.suggestion_accepted,
+      tokensSavedEst: t.tokens_saved_est,
+      responseTokensEst: t.response_tokens_est,
+      toolCalls: t.tool_calls ? (typeof t.tool_calls === 'string' ? t.tool_calls : JSON.stringify(t.tool_calls)) : null,
+      latencyMs: t.latency_ms,
+      wasRetry: t.was_retry,
+      contextUsedPct: t.context_used_pct,
+      createdAt: t.created_at,
+    }));
+
     const efficiency = calculateEfficiency({
-      session: session as any,
-      turns: sessionTurns as any[],
+      session: sessionForCalc as any,
+      turns: turnsForCalc as any[],
     });
 
-    db.update(sessions)
-      .set({
-        endedAt: now,
-        avgPromptScore: avgScore ? Math.round(avgScore * 10) / 10 : null,
-        efficiencyScore: efficiency.score,
-        tokenWasteRatio: efficiency.tokenWasteRatio,
-        contextPeakPct: efficiency.contextPeakPct,
-      })
-      .where(eq(sessions.id, sessionId))
-      .run();
+    await supabase.from('ai_sessions').update({
+      ended_at: now,
+      avg_prompt_score: avgScore ? Math.round(avgScore * 10) / 10 : null,
+      efficiency_score: efficiency.score,
+      token_waste_ratio: efficiency.tokenWasteRatio,
+      context_peak_pct: efficiency.contextPeakPct,
+    }).eq('id', sessionId);
+
+    // Insert activity timeline event for session end
+    supabase.from('activity_timeline').insert({
+      event_type: 'ai_session_end',
+      title: 'AI session ended',
+      description: `${turnsArr.length} turns, score ${avgScore ? Math.round(avgScore) : '--'}`,
+      metadata: {
+        session_id: sessionId,
+        total_turns: session.total_turns,
+        total_cost_usd: session.total_cost_usd,
+        avg_score: avgScore,
+        efficiency_score: efficiency.score,
+      },
+      source_id: sessionId,
+      source_table: 'ai_sessions',
+      is_ai_assisted: true,
+      occurred_at: now,
+    }).then(() => {}, () => {});
 
     // Fire-and-forget: analyze session with LLM
-    analyzeSession(session as any, sessionTurns as any[]).catch(() => {});
-
-    // Fire-and-forget: auto-sync to Supabase
-    const { syncToSupabase, isSupabaseConfigured } = await import('evaluateai-core');
-    if (isSupabaseConfigured()) {
-      syncToSupabase().catch(() => {});
-    }
+    analyzeSession(sessionForCalc as any, turnsForCalc as any[]).catch(() => {});
   } catch {
     // Never fail
   }

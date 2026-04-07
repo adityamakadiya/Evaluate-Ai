@@ -1,9 +1,8 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import Table from 'cli-table3';
-import { getDb, sessions, turns, toolEvents } from 'evaluateai-core';
-import type { Session, SessionAnalysis } from 'evaluateai-core';
-import { desc, eq } from 'drizzle-orm';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import type { SessionAnalysis } from 'evaluateai-core';
 import {
   formatCost,
   formatTokens,
@@ -12,17 +11,29 @@ import {
   printHeader,
 } from '../utils/display.js';
 
+function getSupabase(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
 /**
  * Print a table of recent sessions.
  */
-function listSessions(limit: number): void {
-  const db = getDb();
-  const rows = db.select().from(sessions)
-    .orderBy(desc(sessions.startedAt))
-    .limit(limit)
-    .all();
+async function listSessions(supabase: SupabaseClient, limit: number): Promise<void> {
+  const { data: rows, error } = await supabase
+    .from('ai_sessions')
+    .select('*')
+    .order('started_at', { ascending: false })
+    .limit(limit);
 
-  if (rows.length === 0) {
+  if (error) {
+    console.log(chalk.red(`  Error: ${error.message}`));
+    return;
+  }
+
+  if (!rows || rows.length === 0) {
     console.log(chalk.gray('  No sessions found.'));
     return;
   }
@@ -42,19 +53,19 @@ function listSessions(limit: number): void {
   });
 
   for (const s of rows) {
-    const project = s.projectDir
-      ? (s.projectDir.split('/').pop() ?? s.projectDir)
+    const project = s.project_dir
+      ? (s.project_dir.split('/').pop() ?? s.project_dir)
       : '--';
-    const score = s.avgPromptScore != null ? formatScore(s.avgPromptScore) : chalk.gray('--');
-    const tokens = formatTokens(s.totalInputTokens + s.totalOutputTokens);
-    const cost = formatCost(s.totalCostUsd);
-    const when = formatDuration(Date.now() - new Date(s.startedAt).getTime());
+    const score = s.avg_prompt_score != null ? formatScore(s.avg_prompt_score) : chalk.gray('--');
+    const tokens = formatTokens((s.total_input_tokens ?? 0) + (s.total_output_tokens ?? 0));
+    const cost = formatCost(s.total_cost_usd ?? 0);
+    const when = formatDuration(Date.now() - new Date(s.started_at).getTime());
 
     table.push([
       chalk.dim(s.id.slice(0, 10)),
       project.length > 20 ? project.slice(0, 19) + '…' : project,
       score,
-      String(s.totalTurns),
+      String(s.total_turns ?? 0),
       tokens,
       cost,
       chalk.dim(when),
@@ -69,12 +80,15 @@ function listSessions(limit: number): void {
 /**
  * Print a detailed view of a single session.
  */
-function showSession(sessionId: string): void {
-  const db = getDb();
+async function showSession(supabase: SupabaseClient, sessionId: string): Promise<void> {
+  // Find session (match by prefix using ilike)
+  const { data: matches } = await supabase
+    .from('ai_sessions')
+    .select('*')
+    .ilike('id', `${sessionId}%`)
+    .limit(1);
 
-  // Find session (match by prefix)
-  const allSessions = db.select().from(sessions).all();
-  const session = allSessions.find(s => s.id.startsWith(sessionId));
+  const session = matches?.[0];
 
   if (!session) {
     console.log(chalk.red(`  Session not found: ${sessionId}`));
@@ -83,23 +97,25 @@ function showSession(sessionId: string): void {
 
   // Session header
   printHeader(`Session ${session.id.slice(0, 10)}`);
-  const project = session.projectDir
-    ? session.projectDir.split('/').pop() ?? session.projectDir
+  const project = session.project_dir
+    ? session.project_dir.split('/').pop() ?? session.project_dir
     : '--';
   console.log(`  Project:     ${chalk.white(project)}`);
   console.log(`  Model:       ${chalk.white(session.model ?? '--')}`);
-  console.log(`  Started:     ${chalk.white(session.startedAt)}`);
-  console.log(`  Ended:       ${chalk.white(session.endedAt ?? 'in progress')}`);
-  console.log(`  Turns:       ${chalk.white(String(session.totalTurns))}`);
-  console.log(`  Tokens:      ${chalk.white(formatTokens(session.totalInputTokens + session.totalOutputTokens))}`);
-  console.log(`  Cost:        ${chalk.white(formatCost(session.totalCostUsd))}`);
-  console.log(`  Avg Score:   ${session.avgPromptScore != null ? formatScore(session.avgPromptScore) : chalk.gray('--')}`);
-  console.log(`  Efficiency:  ${session.efficiencyScore != null ? formatScore(session.efficiencyScore) : chalk.gray('--')}`);
+  console.log(`  Started:     ${chalk.white(session.started_at)}`);
+  console.log(`  Ended:       ${chalk.white(session.ended_at ?? 'in progress')}`);
+  console.log(`  Turns:       ${chalk.white(String(session.total_turns ?? 0))}`);
+  console.log(`  Tokens:      ${chalk.white(formatTokens((session.total_input_tokens ?? 0) + (session.total_output_tokens ?? 0)))}`);
+  console.log(`  Cost:        ${chalk.white(formatCost(session.total_cost_usd ?? 0))}`);
+  console.log(`  Avg Score:   ${session.avg_prompt_score != null ? formatScore(session.avg_prompt_score) : chalk.gray('--')}`);
+  console.log(`  Efficiency:  ${session.efficiency_score != null ? formatScore(session.efficiency_score) : chalk.gray('--')}`);
 
   // LLM analysis
   if (session.analysis) {
     try {
-      const analysis: SessionAnalysis = JSON.parse(session.analysis);
+      const analysis: SessionAnalysis = typeof session.analysis === 'string'
+        ? JSON.parse(session.analysis)
+        : session.analysis;
       console.log('');
       console.log(chalk.bold('  Analysis'));
       console.log(`  ${chalk.white(analysis.summary)}`);
@@ -118,12 +134,13 @@ function showSession(sessionId: string): void {
   }
 
   // Turn-by-turn detail
-  const turnRows = db.select().from(turns)
-    .where(eq(turns.sessionId, session.id))
-    .orderBy(turns.turnNumber)
-    .all();
+  const { data: turnRows } = await supabase
+    .from('ai_turns')
+    .select('*')
+    .eq('session_id', session.id)
+    .order('turn_number', { ascending: true });
 
-  if (turnRows.length > 0) {
+  if (turnRows && turnRows.length > 0) {
     console.log('');
     console.log(chalk.bold('  Turn-by-Turn'));
 
@@ -140,22 +157,23 @@ function showSession(sessionId: string): void {
     });
 
     for (const t of turnRows) {
-      const score = t.heuristicScore != null ? formatScore(t.heuristicScore) : chalk.gray('--');
-      const tokens = t.responseTokensEst != null ? formatTokens(t.responseTokensEst) : '--';
+      const score = t.heuristic_score != null ? formatScore(t.heuristic_score) : chalk.gray('--');
+      const tokens = t.response_tokens_est != null ? formatTokens(t.response_tokens_est) : '--';
 
       let toolCount = 0;
-      if (t.toolCalls) {
+      if (t.tool_calls) {
         try {
-          toolCount = JSON.parse(t.toolCalls).length;
+          const calls = typeof t.tool_calls === 'string' ? JSON.parse(t.tool_calls) : t.tool_calls;
+          toolCount = Array.isArray(calls) ? calls.length : 0;
         } catch { /* ignore */ }
       }
 
-      const suggestion = t.suggestionText
-        ? (t.suggestionText.length > 42 ? t.suggestionText.slice(0, 39) + '...' : t.suggestionText)
+      const suggestion = t.suggestion_text
+        ? (t.suggestion_text.length > 42 ? t.suggestion_text.slice(0, 39) + '...' : t.suggestion_text)
         : chalk.gray('--');
 
       table.push([
-        String(t.turnNumber),
+        String(t.turn_number),
         score,
         tokens,
         String(toolCount),
@@ -167,16 +185,17 @@ function showSession(sessionId: string): void {
   }
 
   // Tool events
-  const events = db.select().from(toolEvents)
-    .where(eq(toolEvents.sessionId, session.id))
-    .all();
+  const { data: events } = await supabase
+    .from('ai_tool_events')
+    .select('*')
+    .eq('session_id', session.id);
 
-  if (events.length > 0) {
+  if (events && events.length > 0) {
     console.log('');
     console.log(chalk.bold(`  Tool Calls (${events.length})`));
     const toolCounts: Record<string, number> = {};
     for (const e of events) {
-      toolCounts[e.toolName] = (toolCounts[e.toolName] ?? 0) + 1;
+      toolCounts[e.tool_name] = (toolCounts[e.tool_name] ?? 0) + 1;
     }
     const sorted = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
     for (const [name, count] of sorted.slice(0, 10)) {
@@ -190,10 +209,17 @@ function showSession(sessionId: string): void {
 export const sessionsCommand = new Command('sessions')
   .description('List and inspect sessions')
   .argument('[id]', 'Session ID to show details for')
-  .action((id?: string) => {
+  .action(async (id?: string) => {
+    const supabase = getSupabase();
+    if (!supabase) {
+      console.log(chalk.red('  Supabase not configured.'));
+      console.log(chalk.gray('  Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables.'));
+      return;
+    }
+
     if (id) {
-      showSession(id);
+      await showSession(supabase, id);
     } else {
-      listSessions(20);
+      await listSessions(supabase, 20);
     }
   });

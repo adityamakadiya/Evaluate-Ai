@@ -1,8 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Session, Turn, SessionAnalysis } from '../types.js';
-import { getDb } from '../db/client.js';
-import { sessions } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { updateSession } from '../db/supabase.js';
 
 const ANALYSIS_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -21,7 +19,7 @@ function getClient(): Anthropic {
 
 /**
  * Analyze a completed session using Haiku.
- * Updates the session record with analysis results.
+ * Updates the session record in Supabase with analysis results.
  */
 export async function analyzeSession(
   session: Session,
@@ -94,14 +92,11 @@ Return JSON:
       topTip: parsed.top_tip ?? '',
     };
 
-    // Update session with analysis
-    const db = getDb();
-    await db.update(sessions)
-      .set({
-        analysis: JSON.stringify(analysis),
-        analyzedAt: new Date().toISOString(),
-      })
-      .where(eq(sessions.id, session.id));
+    // Update session with analysis via Supabase
+    await updateSession(session.id, {
+      analysis: JSON.stringify(analysis),
+      analyzedAt: new Date().toISOString(),
+    });
 
     return analysis;
   } catch {

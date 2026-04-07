@@ -48,8 +48,7 @@ Claude Code hooks capture:
 └── Files changed by AI
 
 Data stored in:
-├── Local SQLite (~/.evaluateai-v2/db.sqlite)
-└── Supabase (auto-synced on every turn completion)
+└── Supabase (direct write on every event — no local SQLite)
 ```
 
 ### What the Manager Sees from npm Package Data
@@ -91,7 +90,7 @@ evaluateai npm package (hooks)
         ├── Shows suggestion if score < threshold
         │
         ▼
-Local SQLite ──auto-sync──▶ Supabase
+Supabase (direct write)
                                 │
                                 ▼
                     Manager Dashboard
@@ -349,8 +348,7 @@ Developer types prompt in Claude Code
         ▼
 Hook fires automatically:
   → Prompt scored (heuristic, 0ms)
-  → Prompt + response saved to local SQLite
-  → Auto-synced to team's Supabase
+  → Prompt + response saved directly to Supabase
   → If score < threshold: quick tip shown
         │
         ▼
@@ -405,14 +403,7 @@ The npm package ADDS:
 ### 4.1 What Lives Where
 
 ```
-LOCAL (Developer Machine):
-  ~/.evaluateai-v2/db.sqlite
-  ├── sessions (AI sessions)
-  ├── turns (prompts + scores)
-  ├── tool_events (AI tool calls)
-  └── config (local settings)
-
-SUPABASE (Cloud — Manager Access):
+ALL DATA IN SUPABASE (Cloud — Single Source of Truth):
   ├── teams, team_members          ← Team structure
   ├── integrations                 ← GitHub, Fireflies, Jira, Slack tokens
   ├── meetings                     ← Meeting transcripts

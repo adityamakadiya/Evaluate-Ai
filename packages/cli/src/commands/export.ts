@@ -1,27 +1,38 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { writeFileSync } from 'node:fs';
-import { getDb, sessions, turns } from 'evaluateai-core';
-import { desc } from 'drizzle-orm';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { printHeader } from '../utils/display.js';
+
+function getSupabase(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
 function getDateStamp(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-function exportCsv(): void {
-  const db = getDb();
-  const rows = db.select().from(sessions)
-    .orderBy(desc(sessions.startedAt))
-    .all();
+async function exportCsv(supabase: SupabaseClient): Promise<void> {
+  const { data: rows, error } = await supabase
+    .from('ai_sessions')
+    .select('*')
+    .order('started_at', { ascending: false });
 
-  if (rows.length === 0) {
+  if (error) {
+    console.log(chalk.red(`  Error: ${error.message}`));
+    return;
+  }
+
+  if (!rows || rows.length === 0) {
     console.log(chalk.gray('  No sessions to export.'));
     return;
   }
 
   const headers = [
-    'id', 'tool', 'integration', 'project_dir', 'git_repo', 'git_branch', 'model',
+    'id', 'tool', 'project_dir', 'git_repo', 'git_branch', 'model',
     'started_at', 'ended_at', 'total_turns', 'total_input_tokens', 'total_output_tokens',
     'total_cost_usd', 'total_tool_calls', 'files_changed', 'avg_prompt_score',
     'efficiency_score', 'token_waste_ratio', 'context_peak_pct',
@@ -32,24 +43,23 @@ function exportCsv(): void {
   for (const s of rows) {
     const values = [
       s.id,
-      s.tool,
-      s.integration,
-      s.projectDir ?? '',
-      s.gitRepo ?? '',
-      s.gitBranch ?? '',
+      s.tool ?? '',
+      s.project_dir ?? '',
+      s.git_repo ?? '',
+      s.git_branch ?? '',
       s.model ?? '',
-      s.startedAt,
-      s.endedAt ?? '',
-      String(s.totalTurns),
-      String(s.totalInputTokens),
-      String(s.totalOutputTokens),
-      String(s.totalCostUsd),
-      String(s.totalToolCalls),
-      String(s.filesChanged),
-      s.avgPromptScore != null ? String(s.avgPromptScore) : '',
-      s.efficiencyScore != null ? String(s.efficiencyScore) : '',
-      s.tokenWasteRatio != null ? String(s.tokenWasteRatio) : '',
-      s.contextPeakPct != null ? String(s.contextPeakPct) : '',
+      s.started_at ?? '',
+      s.ended_at ?? '',
+      String(s.total_turns ?? 0),
+      String(s.total_input_tokens ?? 0),
+      String(s.total_output_tokens ?? 0),
+      String(s.total_cost_usd ?? 0),
+      String(s.total_tool_calls ?? 0),
+      String(s.files_changed ?? 0),
+      s.avg_prompt_score != null ? String(s.avg_prompt_score) : '',
+      s.efficiency_score != null ? String(s.efficiency_score) : '',
+      s.token_waste_ratio != null ? String(s.token_waste_ratio) : '',
+      s.context_peak_pct != null ? String(s.context_peak_pct) : '',
     ];
     // Escape values containing commas or quotes
     const escaped = values.map(v => {
@@ -66,27 +76,35 @@ function exportCsv(): void {
   console.log(chalk.green(`  Exported ${rows.length} sessions to ${filename}`));
 }
 
-function exportJson(): void {
-  const db = getDb();
-  const sessionRows = db.select().from(sessions)
-    .orderBy(desc(sessions.startedAt))
-    .all();
+async function exportJson(supabase: SupabaseClient): Promise<void> {
+  const { data: sessionRows, error } = await supabase
+    .from('ai_sessions')
+    .select('*')
+    .order('started_at', { ascending: false });
 
-  if (sessionRows.length === 0) {
+  if (error) {
+    console.log(chalk.red(`  Error: ${error.message}`));
+    return;
+  }
+
+  if (!sessionRows || sessionRows.length === 0) {
     console.log(chalk.gray('  No sessions to export.'));
     return;
   }
 
-  const turnRows = db.select().from(turns).all();
+  const { data: turnRows } = await supabase
+    .from('ai_turns')
+    .select('*');
+
   const turnsBySession: Record<string, typeof turnRows> = {};
-  for (const t of turnRows) {
-    if (!turnsBySession[t.sessionId]) turnsBySession[t.sessionId] = [];
-    turnsBySession[t.sessionId].push(t);
+  for (const t of (turnRows ?? [])) {
+    if (!turnsBySession[t.session_id]) turnsBySession[t.session_id] = [];
+    turnsBySession[t.session_id]!.push(t);
   }
 
   const data = sessionRows.map(s => ({
     ...s,
-    turns: (turnsBySession[s.id] ?? []).sort((a, b) => a.turnNumber - b.turnNumber),
+    turns: (turnsBySession[s.id] ?? []).sort((a: any, b: any) => a.turn_number - b.turn_number),
   }));
 
   const filename = `evaluateai-export-${getDateStamp()}.json`;
@@ -98,8 +116,15 @@ export const exportCommand = new Command('export')
   .description('Export sessions to CSV or JSON')
   .option('--csv', 'Export as CSV')
   .option('--json', 'Export as JSON')
-  .action((opts: { csv?: boolean; json?: boolean }) => {
+  .action(async (opts: { csv?: boolean; json?: boolean }) => {
     printHeader('Export');
+
+    const supabase = getSupabase();
+    if (!supabase) {
+      console.log(chalk.red('  Supabase not configured.'));
+      console.log(chalk.gray('  Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables.'));
+      return;
+    }
 
     if (!opts.csv && !opts.json) {
       console.log(chalk.yellow('  Specify --csv or --json'));
@@ -107,7 +132,7 @@ export const exportCommand = new Command('export')
       return;
     }
 
-    if (opts.csv) exportCsv();
-    if (opts.json) exportJson();
+    if (opts.csv) await exportCsv(supabase);
+    if (opts.json) await exportJson(supabase);
     console.log('');
   });

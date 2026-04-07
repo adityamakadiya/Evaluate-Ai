@@ -1,11 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'node:crypto';
 import type { LLMScoreBreakdown } from '../types.js';
-import { getDb } from '../db/client.js';
-import { scoringCalls } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { getTurnByHash, updateTurn, createScoringCall } from '../db/supabase.js';
 import { ulid } from 'ulid';
-import { turns } from '../db/schema.js';
 
 const SCORING_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -56,7 +53,7 @@ export async function scoreLLM(
   try {
     const hash = hashPrompt(promptText);
 
-    // Check cache
+    // Check cache via Supabase — look for a turn with the same prompt_hash that has a score
     const cached = await checkCache(hash);
     if (cached) return cached;
 
@@ -94,18 +91,18 @@ ${context?.gitBranch ? `Branch: ${context.gitBranch}` : ''}`.trim();
       tokensSavedEst: parsed.tokens_saved_est ?? 0,
     };
 
-    // Cache result and log cost
-    await cacheResult(hash, result, response.usage);
+    // Log scoring cost to Supabase
+    await cacheResult(result, response.usage);
 
     return result;
-  } catch (error) {
+  } catch {
     // Graceful fallback — don't break the hook
     return null;
   }
 }
 
 /**
- * Score a prompt and update the turn record in the database.
+ * Score a prompt and update the turn record in Supabase.
  * This is the async fire-and-forget version called from hooks.
  */
 export async function scoreLLMAndUpdate(
@@ -116,15 +113,12 @@ export async function scoreLLMAndUpdate(
   const result = await scoreLLM(promptText, context);
   if (!result) return;
 
-  const db = getDb();
-  await db.update(turns)
-    .set({
-      llmScore: result.total,
-      scoreBreakdown: JSON.stringify(result),
-      suggestionText: result.suggestion || null,
-      tokensSavedEst: result.tokensSavedEst || null,
-    })
-    .where(eq(turns.id, turnId));
+  await updateTurn(turnId, {
+    llmScore: result.total,
+    scoreBreakdown: JSON.stringify(result),
+    suggestionText: result.suggestion || undefined,
+    tokensSavedEst: result.tokensSavedEst || undefined,
+  });
 }
 
 function hashPrompt(text: string): string {
@@ -133,15 +127,9 @@ function hashPrompt(text: string): string {
 
 async function checkCache(hash: string): Promise<LLMScoreBreakdown | null> {
   try {
-    const db = getDb();
-    // Check if we've scored this exact prompt before via turns table
-    const existing = await db.select()
-      .from(turns)
-      .where(eq(turns.promptHash, hash))
-      .limit(1);
-
-    if (existing.length > 0 && existing[0].scoreBreakdown) {
-      return JSON.parse(existing[0].scoreBreakdown) as LLMScoreBreakdown;
+    const existing = await getTurnByHash(hash);
+    if (existing && existing.scoreBreakdown) {
+      return JSON.parse(existing.scoreBreakdown) as LLMScoreBreakdown;
     }
   } catch {
     // Cache miss is fine
@@ -150,17 +138,15 @@ async function checkCache(hash: string): Promise<LLMScoreBreakdown | null> {
 }
 
 async function cacheResult(
-  _hash: string,
   _result: LLMScoreBreakdown,
   usage: { input_tokens: number; output_tokens: number }
 ): Promise<void> {
   try {
-    const db = getDb();
     const cost =
       (usage.input_tokens * 0.8) / 1_000_000 +
       (usage.output_tokens * 4) / 1_000_000;
 
-    await db.insert(scoringCalls).values({
+    await createScoringCall({
       id: ulid(),
       turnId: null,
       model: SCORING_MODEL,
