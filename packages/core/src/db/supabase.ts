@@ -9,7 +9,6 @@ function toSession(row: Record<string, unknown>): Session {
   return {
     id: row.id as string,
     tool: row.tool as string,
-    integration: row.integration as Session['integration'],
     projectDir: (row.project_dir as string) ?? null,
     gitRepo: (row.git_repo as string) ?? null,
     gitBranch: (row.git_branch as string) ?? null,
@@ -47,10 +46,12 @@ function toTurn(row: Record<string, unknown>): Turn {
     suggestionAccepted: (row.suggestion_accepted as boolean) ?? null,
     tokensSavedEst: (row.tokens_saved_est as number) ?? null,
     responseTokensEst: (row.response_tokens_est as number) ?? null,
+    responseText: (row.response_text as string) ?? null,
     toolCalls: (row.tool_calls as string) ?? null,
     latencyMs: (row.latency_ms as number) ?? null,
     wasRetry: (row.was_retry as boolean) ?? false,
     contextUsedPct: (row.context_used_pct as number) ?? null,
+    intent: (row.intent as string) ?? null,
     createdAt: row.created_at as string,
   };
 }
@@ -395,7 +396,7 @@ export async function addTimelineEvent(data: {
 }): Promise<void> {
   try {
     const supabase = getSupabase();
-    const { error } = await supabase.from('ai_activity_timeline').insert({
+    const { error } = await supabase.from('activity_timeline').insert({
       id: data.id,
       team_id: data.teamId ?? null,
       developer_id: data.developerId ?? null,
@@ -403,7 +404,8 @@ export async function addTimelineEvent(data: {
       title: data.title,
       description: data.description ?? null,
       metadata: data.metadata ?? null,
-      created_at: data.createdAt,
+      is_ai_assisted: true,
+      occurred_at: data.createdAt,
     });
     if (error) console.error('addTimelineEvent error:', error.message);
   } catch {

@@ -42,12 +42,7 @@ interface TranscriptEntry {
 }
 
 // --------------- Pricing ---------------
-
-const PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  'claude-opus-4-6': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
-  'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  'claude-haiku-4-5-20251001': { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
-};
+import { getModelPricing, normalizeModelId, calculateCost } from '@/lib/pricing';
 
 // --------------- Anti-pattern / signal definitions (mirrors core heuristic) ---------------
 
@@ -173,7 +168,7 @@ function parseTranscriptForTurn(transcriptPath: string, turnNumber: number): {
 
     for (const idx of indices) {
       const msg = entries[idx].message;
-      if (msg.model) model = msg.model;
+      if (msg.model) model = normalizeModelId(msg.model);
 
       for (const c of (msg.content ?? [])) {
         if (c.type === 'text' && c.text) {
@@ -205,13 +200,10 @@ function parseTranscriptForTurn(transcriptPath: string, turnNumber: number): {
       model,
     };
 
-    const pricing = PRICING[usage.model] ?? PRICING['claude-sonnet-4-6'];
-    const costUsd = (
-      usage.inputTokens * pricing.input +
-      usage.outputTokens * pricing.output +
-      usage.cacheReadTokens * pricing.cacheRead +
-      usage.cacheWriteTokens * pricing.cacheWrite
-    ) / 1_000_000;
+    const costUsd = calculateCost(
+      usage.inputTokens, usage.outputTokens, usage.model,
+      usage.cacheReadTokens, usage.cacheWriteTokens,
+    );
 
     return { text: responseText, toolCalls, usage, costUsd };
   } catch {
@@ -310,8 +302,8 @@ function generateImprovement(
   const rewriteExample = generateRewrite(promptText, antiPatternIds, missingSignalIds);
 
   const estimatedTokensSaved = Math.round((promptTokensEst ?? 50) * 0.3 + antiPatternObjects.length * 50);
-  const pricing = PRICING['claude-sonnet-4-6'];
-  const estimatedCostSaved = (estimatedTokensSaved * pricing.output) / 1_000_000;
+  const sonnetPricing = getModelPricing('claude-sonnet-4-6');
+  const estimatedCostSaved = (estimatedTokensSaved * sonnetPricing.output) / 1_000_000;
 
   const maxPossibleScore = 100;
 
@@ -379,7 +371,7 @@ export async function GET(
     // Fetch session data
     const { data: session, error: sessionErr } = await supabase
       .from('ai_sessions')
-      .select('id, model, project_dir, git_branch, started_at, total_turns, developer_id')
+      .select('id, model, project_dir, git_branch, started_at, ended_at, total_turns, developer_id')
       .eq('id', id)
       .single();
 
@@ -430,6 +422,15 @@ export async function GET(
       turn.prompt_tokens_est as number | null
     );
 
+    // Detect stale sessions: no ended_at but session started > 30 min ago
+    // and no response data. This means the SessionEnd hook likely failed.
+    const sessionStartedAt = session.started_at ? new Date(session.started_at).getTime() : 0;
+    const isStaleSession = !session.ended_at && sessionStartedAt > 0
+      && (Date.now() - sessionStartedAt) > 30 * 60 * 1000;
+
+    // Use effective endedAt: if session is stale, treat it as ended
+    const effectiveEndedAt = session.ended_at ?? (isStaleSession ? session.started_at : null);
+
     return NextResponse.json({
       turn: {
         id: turn.id,
@@ -456,6 +457,7 @@ export async function GET(
         projectDir: session.project_dir,
         gitBranch: session.git_branch,
         startedAt: session.started_at,
+        endedAt: effectiveEndedAt,
         totalTurns: allTurns.length || session.total_turns,
         developerId: session.developer_id,
         developerName,

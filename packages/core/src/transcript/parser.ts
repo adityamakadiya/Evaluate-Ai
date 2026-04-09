@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { calculateCost, normalizeModelId } from '../models/pricing.js';
 
 /**
  * A single entry from a Claude Code transcript JSONL file.
@@ -67,20 +68,13 @@ export interface TranscriptSummary {
   totalCostUsd: number;
 }
 
-// Model pricing per 1M tokens
-const PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  'claude-opus-4-6': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
-  'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  'claude-haiku-4-5-20251001': { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
-};
-
 function calculateExactCost(usage: TranscriptUsage): number {
-  const pricing = PRICING[usage.model] ?? PRICING['claude-sonnet-4-6'];
-  return (
-    (usage.inputTokens * pricing.input +
-     usage.outputTokens * pricing.output +
-     usage.cacheReadTokens * pricing.cacheRead +
-     usage.cacheWriteTokens * pricing.cacheWrite) / 1_000_000
+  return calculateCost(
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.model,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens
   );
 }
 
@@ -118,7 +112,7 @@ export function getLatestResponse(transcriptPath: string): TranscriptResponse | 
   // Find the last assistant message with usage data
   for (let i = lines.length - 1; i >= 0; i--) {
     const entry = parseLine(lines[i]);
-    if (!entry) continue;
+    if (!entry?.message) continue;
 
     const msg = entry.message;
     if (msg.role === 'assistant' && msg.usage?.output_tokens) {
@@ -136,7 +130,7 @@ export function getLatestResponse(transcriptPath: string): TranscriptResponse | 
         outputTokens: msg.usage.output_tokens ?? 0,
         cacheReadTokens: msg.usage.cache_read_input_tokens ?? 0,
         cacheWriteTokens: msg.usage.cache_creation_input_tokens ?? 0,
-        model: msg.model ?? 'unknown',
+        model: normalizeModelId(msg.model ?? 'unknown'),
         totalTokens: (msg.usage.input_tokens ?? 0) + (msg.usage.output_tokens ?? 0) +
                      (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0),
       };
@@ -172,12 +166,17 @@ export function getSessionSummary(transcriptPath: string): TranscriptSummary | n
 
     for (const line of lines) {
       const entry = parseLine(line);
-      if (!entry) continue;
+      if (!entry?.message) continue;
 
       const msg = entry.message;
 
       if (msg.role === 'user') {
-        userMessageCount++;
+        // Only count real user prompts, not tool_result messages
+        const content = msg.content;
+        const isToolResult = Array.isArray(content) && content.length > 0 && content[0]?.type === 'tool_result';
+        if (!isToolResult) {
+          userMessageCount++;
+        }
       }
 
       if (msg.role === 'assistant' && msg.usage) {
@@ -191,7 +190,7 @@ export function getSessionSummary(transcriptPath: string): TranscriptSummary | n
         totalCacheReadTokens += cacheRead;
         totalCacheWriteTokens += cacheWrite;
 
-        if (msg.model) model = msg.model;
+        if (msg.model) model = normalizeModelId(msg.model);
 
         const responseText = (msg.content ?? [])
           .filter(c => c.type === 'text' && c.text)
@@ -204,7 +203,7 @@ export function getSessionSummary(transcriptPath: string): TranscriptSummary | n
 
         const usage: TranscriptUsage = {
           inputTokens, outputTokens, cacheReadTokens: cacheRead,
-          cacheWriteTokens: cacheWrite, model: msg.model ?? model,
+          cacheWriteTokens: cacheWrite, model: normalizeModelId(msg.model ?? model),
           totalTokens: inputTokens + outputTokens + cacheRead + cacheWrite,
         };
 

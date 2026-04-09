@@ -34,7 +34,7 @@ export { calculateEfficiency } from './scoring/efficiency.js';
 
 // Tokens & pricing
 export { estimateTokens } from './tokens/estimator.js';
-export { getModelPricing, calculateCost, recommendModel } from './models/pricing.js';
+export { getModelPricing, calculateCost, recommendModel, normalizeModelId } from './models/pricing.js';
 
 // Analysis
 export { analyzeSession } from './analysis/session-analyzer.js';

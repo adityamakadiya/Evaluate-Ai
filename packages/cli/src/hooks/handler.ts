@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -36,12 +36,21 @@ function getCredentials(): CliCreds | null {
   }
 }
 
+/** Track whether we've already warned about missing credentials (once per process). */
+let _credWarned = false;
+
 /**
  * Send data to the API proxy. Returns true on success.
  */
 async function sendToApi(event: string, data: Record<string, unknown>): Promise<boolean> {
   const creds = getCredentials();
-  if (!creds?.token || !creds?.apiUrl) return false;
+  if (!creds?.token || !creds?.apiUrl) {
+    if (!_credWarned) {
+      _credWarned = true;
+      process.stderr.write('[EvaluateAI] Not authenticated — data not tracked. Run: evalai login\n');
+    }
+    return false;
+  }
 
   try {
     const controller = new AbortController();
@@ -151,6 +160,38 @@ export function safeExit(code: number = 0): never {
   }
 }
 
+/**
+ * Resolve transcript path from payload. Falls back to searching by session_id
+ * in ~/.claude/projects/ if transcript_path is not provided.
+ */
+function resolveTranscriptPath(payload: Record<string, unknown>): string | null {
+  // Prefer explicit transcript_path from Claude Code
+  if (payload.transcript_path) {
+    const p = String(payload.transcript_path);
+    if (existsSync(p)) return p;
+  }
+
+  // Fallback: search for <session_id>.jsonl in ~/.claude/projects/
+  const sid = String(payload.session_id || '');
+  if (!sid) return null;
+
+  try {
+    const claudeProjectsDir = join(homedir(), '.claude', 'projects');
+    if (!existsSync(claudeProjectsDir)) return null;
+
+    const dirs = readdirSync(claudeProjectsDir, { withFileTypes: true });
+    for (const dir of dirs) {
+      if (!dir.isDirectory()) continue;
+      const candidate = join(claudeProjectsDir, dir.name, `${sid}.jsonl`);
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {
+    // non-critical
+  }
+
+  return null;
+}
+
 // ── Hook event router ────────────────────────────────────────
 
 /**
@@ -242,7 +283,7 @@ async function handlePromptSubmit(payload: Record<string, unknown>): Promise<voi
       prompt_hash: promptHash,
       prompt_tokens_est: tokenEst,
       heuristic_score: heuristic.score,
-      anti_patterns: JSON.stringify(heuristic.antiPatterns.map(a => a.id)),
+      anti_patterns: heuristic.antiPatterns.map(a => a.id),
       intent: heuristic.intent ?? null,
       was_retry: false,
     });
@@ -300,7 +341,7 @@ async function handleStop(payload: Record<string, unknown>): Promise<void> {
     const sid = String(payload.session_id || '');
     if (!sid) return;
 
-    const transcriptPath = payload.transcript_path ? String(payload.transcript_path) : null;
+    const transcriptPath = resolveTranscriptPath(payload);
     if (!transcriptPath) return;
 
     // Fire-and-forget: parse transcript and update metrics in background
@@ -319,7 +360,7 @@ async function handleStop(payload: Record<string, unknown>): Promise<void> {
           total_turns: summary.turns,
         });
       } catch {
-        // transcript parsing is optional
+        // Non-critical — next Stop will retry
       }
     })().catch(() => {});
   } catch {
@@ -330,6 +371,11 @@ async function handleStop(payload: Record<string, unknown>): Promise<void> {
 /**
  * SessionEnd fires once when the session closes.
  * Send final metrics with ended_at.
+ *
+ * IMPORTANT: This must NOT block Claude Code. The entire flow is
+ * fire-and-forget — we launch the async work and return immediately.
+ * If the API call fails, we retry once. If that also fails, the
+ * dashboard's stale-session detection will auto-close it after 30 min.
  */
 async function handleSessionEnd(payload: Record<string, unknown>): Promise<void> {
   try {
@@ -338,39 +384,52 @@ async function handleSessionEnd(payload: Record<string, unknown>): Promise<void>
 
     const now = payload.timestamp ? String(payload.timestamp) : new Date().toISOString();
 
-    const sessionData: Record<string, unknown> = {
-      session_id: sid,
-      ended_at: now,
-    };
-
-    // Read transcript for final token/cost/turn data
-    const transcriptPath = payload.transcript_path ? String(payload.transcript_path) : null;
-    if (transcriptPath) {
+    // Fire-and-forget: parse transcript + send session_end in background
+    (async () => {
       try {
-        const { getSessionSummary } = await import('evaluateai-core');
-        const summary = getSessionSummary(transcriptPath);
-        if (summary) {
-          sessionData.model = summary.model;
-          sessionData.total_input_tokens = summary.totalInputTokens;
-          sessionData.total_output_tokens = summary.totalOutputTokens;
-          sessionData.total_cost_usd = summary.totalCostUsd;
-          sessionData.total_turns = summary.turns;
+        const sessionData: Record<string, unknown> = {
+          session_id: sid,
+          ended_at: now,
+        };
+
+        // Read transcript for final token/cost/turn data
+        const transcriptPath = resolveTranscriptPath(payload);
+        if (transcriptPath) {
+          try {
+            const { getSessionSummary } = await import('evaluateai-core');
+            const summary = getSessionSummary(transcriptPath);
+            if (summary) {
+              sessionData.model = summary.model;
+              sessionData.total_input_tokens = summary.totalInputTokens;
+              sessionData.total_output_tokens = summary.totalOutputTokens;
+              sessionData.total_cost_usd = summary.totalCostUsd;
+              sessionData.total_turns = summary.turns;
+            }
+          } catch {
+            // Transcript parsing failed — still send ended_at
+          }
         }
+
+        // Send session_end — retry once on failure
+        const ok = await sendToApi('session_end', sessionData);
+        if (!ok) {
+          // Retry after a short delay
+          await new Promise(r => setTimeout(r, 1000));
+          await sendToApi('session_end', sessionData);
+        }
+
+        // Activity timeline (fire-and-forget)
+        sendToApi('activity', {
+          event_type: 'ai_session_end',
+          title: 'AI session ended',
+          description: 'Session completed',
+          developer_name: '',
+          metadata: { session_id: sid },
+        }).catch(() => {});
       } catch {
-        // transcript parsing is optional
+        // Non-critical — stale session detection will handle cleanup
       }
-    }
-
-    await sendToApi('session_end', sessionData);
-
-    // Activity timeline (fire-and-forget)
-    sendToApi('activity', {
-      event_type: 'ai_session_end',
-      title: 'AI session ended',
-      description: 'Session completed',
-      developer_name: '',
-      metadata: { session_id: sid },
-    }).catch(() => {});
+    })().catch(() => {});
   } catch {
     // Never fail
   }

@@ -82,7 +82,7 @@ export async function GET(
 
     // Code changes this week
     let weekCodeQ = supabase.from('code_changes')
-      .select('id, type, title, description, repo, files_changed, additions, deletions, branch, created_at')
+      .select('id, type, title, body, repo, files_changed, additions, deletions, branch, created_at')
       .eq('developer_id', devId)
       .gte('created_at', weekStartStr)
       .order('created_at', { ascending: false });
@@ -303,7 +303,7 @@ export async function GET(
         id: c.id,
         type: c.type,
         title: c.title,
-        description: c.description,
+        description: c.body,
         repo: c.repo,
         filesChanged: c.files_changed,
         additions: c.additions,

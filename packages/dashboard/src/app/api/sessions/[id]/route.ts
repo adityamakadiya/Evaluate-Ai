@@ -1,6 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { normalizeModelId, calculateCost } from '@/lib/pricing';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+function findTranscriptFile(sessionId: string): string | null {
+  const claudeProjectsDir = join(homedir(), '.claude', 'projects');
+  if (!existsSync(claudeProjectsDir)) return null;
+  try {
+    for (const dir of readdirSync(claudeProjectsDir, { withFileTypes: true })) {
+      if (!dir.isDirectory()) continue;
+      const candidate = join(claudeProjectsDir, dir.name, `${sessionId}.jsonl`);
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
 
 export async function GET(
   request: NextRequest,
@@ -65,21 +82,123 @@ export async function GET(
       }
     }
 
+    // Fallback: if DB has no token/cost data, try local transcript file.
+    // This only works when dashboard runs on the same machine as the CLI
+    // (i.e. local dev). In production the CLI writes data to Supabase directly.
+    let totalInputTokens = session.total_input_tokens ?? 0;
+    let totalOutputTokens = session.total_output_tokens ?? 0;
+    let totalCostUsd = session.total_cost_usd ?? 0;
+    let sessionModel = session.model ? normalizeModelId(session.model) : null;
+
+    // Per-turn costs parsed from the transcript (actual usage, not estimates)
+    const perTurnCosts: Record<number, number> = {};
+
+    try {
+      const transcriptPath = findTranscriptFile(id);
+      if (transcriptPath) {
+        const content = readFileSync(transcriptPath, 'utf-8');
+        const lines = content.trim().split('\n');
+
+        // Parse all entries
+        interface TranscriptMsg {
+          role: string;
+          model?: string;
+          content?: Array<{ type: string }>;
+          usage?: {
+            input_tokens?: number;
+            output_tokens?: number;
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+          };
+        }
+        const entries: TranscriptMsg[] = [];
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            const msg = parsed?.message ?? parsed;
+            if (msg?.role) entries.push(msg);
+          } catch { continue; }
+        }
+
+        // Walk entries to compute per-turn costs
+        let userTurnCount = 0;
+        let model = 'unknown';
+        let i = 0;
+        while (i < entries.length) {
+          const entry = entries[i];
+          if (entry.role === 'user') {
+            const c = entry.content;
+            const isToolResult = Array.isArray(c) && c.length > 0 && c[0]?.type === 'tool_result';
+            if (!isToolResult) {
+              userTurnCount++;
+              // Collect all assistant responses for this turn
+              let turnInput = 0, turnOutput = 0, turnCacheRead = 0, turnCacheWrite = 0;
+              let j = i + 1;
+              while (j < entries.length) {
+                const e = entries[j];
+                if (e.role === 'user') {
+                  const uc = e.content;
+                  const isTool = Array.isArray(uc) && uc.length > 0 && uc[0]?.type === 'tool_result';
+                  if (!isTool) break; // next user turn
+                }
+                if (e.role === 'assistant') {
+                  if (e.model) model = normalizeModelId(e.model);
+                  if (e.usage) {
+                    turnInput += e.usage.input_tokens ?? 0;
+                    turnOutput += e.usage.output_tokens ?? 0;
+                    turnCacheRead += e.usage.cache_read_input_tokens ?? 0;
+                    turnCacheWrite += e.usage.cache_creation_input_tokens ?? 0;
+                  }
+                }
+                j++;
+              }
+              perTurnCosts[userTurnCount] = calculateCost(turnInput, turnOutput, model, turnCacheRead, turnCacheWrite);
+            }
+          }
+          i++;
+        }
+
+        // If DB had no cost data, compute totals from transcript
+        if (totalCostUsd === 0 && totalInputTokens === 0) {
+          let cacheRead = 0, cacheWrite = 0;
+          for (const entry of entries) {
+            if (entry.role === 'assistant' && entry.usage) {
+              totalInputTokens += entry.usage.input_tokens ?? 0;
+              totalOutputTokens += entry.usage.output_tokens ?? 0;
+              cacheRead += entry.usage.cache_read_input_tokens ?? 0;
+              cacheWrite += entry.usage.cache_creation_input_tokens ?? 0;
+              if (entry.model) model = normalizeModelId(entry.model);
+            }
+          }
+          totalCostUsd = calculateCost(totalInputTokens, totalOutputTokens, model, cacheRead, cacheWrite);
+          if (!sessionModel || sessionModel === 'unknown') {
+            sessionModel = model;
+          }
+        }
+      }
+    } catch { /* never fail the API */ }
+
+    // Detect stale sessions: no ended_at but session started > 30 min ago.
+    // This means the SessionEnd hook likely failed to fire.
+    const sessionStartedAt = session.started_at ? new Date(session.started_at).getTime() : 0;
+    const isStaleSession = !session.ended_at && sessionStartedAt > 0
+      && (Date.now() - sessionStartedAt) > 30 * 60 * 1000;
+    const effectiveEndedAt = session.ended_at ?? (isStaleSession ? session.started_at : null);
+
     // Transform session to camelCase
     const sessionOut = {
       id: session.id,
       tool: session.tool,
-      integration: session.integration,
-      model: session.model,
+      model: sessionModel || session.model,
       projectDir: session.project_dir,
       gitRepo: session.git_repo,
       gitBranch: session.git_branch,
       startedAt: session.started_at,
-      endedAt: session.ended_at,
+      endedAt: effectiveEndedAt,
       totalTurns: (turnsData ?? []).length || session.total_turns,
-      totalInputTokens: session.total_input_tokens,
-      totalOutputTokens: session.total_output_tokens,
-      totalCostUsd: session.total_cost_usd,
+      totalInputTokens,
+      totalOutputTokens,
+      totalCostUsd,
       totalToolCalls: session.total_tool_calls,
       filesChanged: session.files_changed,
       avgPromptScore: session.avg_prompt_score,
@@ -111,6 +230,7 @@ export async function GET(
       latencyMs: t.latency_ms,
       wasRetry: Boolean(t.was_retry),
       contextUsedPct: t.context_used_pct,
+      costUsd: perTurnCosts[idx + 1] ?? null,
       createdAt: t.created_at,
     }));
 

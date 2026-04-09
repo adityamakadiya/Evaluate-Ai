@@ -66,6 +66,7 @@ interface SessionInfo {
   projectDir: string | null;
   gitBranch: string | null;
   startedAt: string;
+  endedAt: string | null;
   totalTurns: number;
   developerId: string | null;
   developerName: string | null;
@@ -492,8 +493,8 @@ export default function TurnDetailPage() {
         .then((d) => {
           if (!cancelled) {
             setData(d);
-            // Stop polling once we have response data
-            if (d.response && refreshTimer) {
+            // Stop polling once we have response data or session has ended
+            if ((d.response || d.session?.endedAt) && refreshTimer) {
               clearInterval(refreshTimer);
               refreshTimer = null;
             }
@@ -505,9 +506,9 @@ export default function TurnDetailPage() {
 
     fetchData();
 
-    // Auto-refresh every 3 seconds if response is not yet available
+    // Auto-refresh every 3 seconds if response is not yet available and session is still active
     refreshTimer = setInterval(() => {
-      if (data?.response) {
+      if (data?.response || data?.session?.endedAt) {
         if (refreshTimer) clearInterval(refreshTimer);
         return;
       }
@@ -768,6 +769,14 @@ export default function TurnDetailPage() {
                       {/* Token usage bar */}
                       <TokenBar usage={response.usage} costUsd={response.costUsd} />
                     </>
+                  ) : session.endedAt ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <Brain className="w-10 h-10 text-[var(--text-muted)] mb-3" />
+                      <p className="text-sm text-[var(--text-secondary)]">No response recorded for this turn</p>
+                      <p className="text-xs text-[var(--text-muted)] mt-1">
+                        This turn may be a system notification or had no AI response
+                      </p>
+                    </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center py-20 text-center">
                       <div className="relative mb-4">
@@ -852,6 +861,12 @@ export default function TurnDetailPage() {
                           </div>
                         </div>
                       </div>
+                    </div>
+                  ) : session.endedAt ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                      <Layers className="w-10 h-10 text-[var(--text-muted)] mb-3" />
+                      <p className="text-sm text-[var(--text-secondary)]">No token data available</p>
+                      <p className="text-xs text-[var(--text-muted)] mt-1">This turn had no AI response</p>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center py-20 text-center">

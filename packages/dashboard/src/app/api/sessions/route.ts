@@ -64,12 +64,16 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const sessions = (data ?? []).map(s => ({
+    const sessions = (data ?? []).map(s => {
+      // Detect stale sessions: no ended_at but started > 30 min ago
+      const startMs = s.started_at ? new Date(s.started_at).getTime() : 0;
+      const isStale = !s.ended_at && startMs > 0 && (Date.now() - startMs) > 30 * 60 * 1000;
+      return {
       id: s.id,
       tool: s.tool,
       model: s.model,
       startedAt: s.started_at,
-      endedAt: s.ended_at,
+      endedAt: s.ended_at ?? (isStale ? s.started_at : null),
       totalTurns: s.total_turns,
       totalInputTokens: s.total_input_tokens,
       totalOutputTokens: s.total_output_tokens,
@@ -79,7 +83,8 @@ export async function GET(request: NextRequest) {
       projectDir: s.project_dir,
       gitBranch: s.git_branch,
       firstPrompt: firstPrompts[s.id] ?? null,
-    }));
+    };
+    });
 
     return NextResponse.json({ sessions, total: count ?? 0 });
   } catch (err) {

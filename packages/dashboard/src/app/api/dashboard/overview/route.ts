@@ -56,13 +56,13 @@ export async function GET() {
     // Code changes this week (commits/PRs)
     const { data: codeData } = await supabase
       .from('code_changes')
-      .select('change_type')
+      .select('type')
       .eq('team_id', teamId)
       .gte('created_at', weekStartStr)
       .lt('created_at', tomorrowStr);
 
-    const prsMerged = (codeData ?? []).filter(r => r.change_type === 'pr_merged').length;
-    const commits = (codeData ?? []).filter(r => r.change_type === 'commit').length;
+    const prsMerged = (codeData ?? []).filter(r => r.type === 'pr_merged').length;
+    const commits = (codeData ?? []).filter(r => r.type === 'commit').length;
 
     // Tasks completed this week
     const { data: taskData, count: tasksTotal } = await supabase
@@ -88,17 +88,30 @@ export async function GET() {
     // Activity timeline (last 20 events)
     const { data: timelineData } = await supabase
       .from('activity_timeline')
-      .select('id, event_type, title, description, developer_name, metadata, created_at')
+      .select('id, event_type, title, description, developer_id, metadata, created_at')
       .eq('team_id', teamId)
       .order('created_at', { ascending: false })
       .limit(20);
+
+    // Build developer name lookup from team members
+    const timelineDevIds = [...new Set((timelineData ?? []).map(e => e.developer_id).filter(Boolean))];
+    let timelineDevNames: Record<string, string> = {};
+    if (timelineDevIds.length > 0) {
+      const { data: devRows } = await supabase
+        .from('team_members')
+        .select('id, name')
+        .in('id', timelineDevIds);
+      for (const d of devRows ?? []) {
+        timelineDevNames[d.id] = d.name;
+      }
+    }
 
     const timeline = (timelineData ?? []).map(e => ({
       id: e.id,
       eventType: e.event_type,
       title: e.title,
       description: e.description,
-      developerName: e.developer_name,
+      developerName: e.developer_id ? (timelineDevNames[e.developer_id] ?? null) : null,
       metadata: e.metadata,
       createdAt: e.created_at,
     }));

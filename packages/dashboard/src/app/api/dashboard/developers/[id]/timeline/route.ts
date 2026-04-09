@@ -35,19 +35,12 @@ export async function GET(
     const offset = Math.max(parseInt(searchParams.get('offset') ?? '0', 10), 0);
     const filterType = searchParams.get('type');
 
-    // Get the developer's user_id from team_members
-    let memberQuery = supabase
-      .from('team_members')
-      .select('user_id')
-      .eq('id', id);
-    if (teamId) memberQuery = memberQuery.eq('team_id', teamId);
-    const { data: member } = await memberQuery.single();
-
-    const developerId = member?.user_id ?? id;
+    // Use the member_id directly — activity_timeline.developer_id stores team_members.id
+    const developerId = id;
 
     let query = supabase
       .from('activity_timeline')
-      .select('id, event_type, title, description, developer_name, metadata, created_at', { count: 'exact' })
+      .select('id, event_type, title, description, developer_id, metadata, created_at', { count: 'exact' })
       .eq('developer_id', developerId);
     if (teamId) query = query.eq('team_id', teamId);
     query = query.order('created_at', { ascending: false });
@@ -65,12 +58,23 @@ export async function GET(
 
     const { data, count } = await query;
 
+    // Resolve developer name from team_members
+    let developerName: string | null = null;
+    {
+      const { data: memberRow } = await supabase
+        .from('team_members')
+        .select('name')
+        .eq('id', developerId)
+        .single();
+      developerName = memberRow?.name ?? null;
+    }
+
     const events = (data ?? []).map(e => ({
       id: e.id,
       eventType: e.event_type,
       title: e.title,
       description: e.description,
-      developerName: e.developer_name,
+      developerName,
       metadata: e.metadata,
       createdAt: e.created_at,
     }));

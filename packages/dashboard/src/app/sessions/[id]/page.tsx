@@ -41,6 +41,7 @@ interface TurnData {
   id: string;
   turnNumber: number;
   promptText: string | null;
+  promptTokensEst: number | null;
   heuristicScore: number | null;
   llmScore: number | null;
   antiPatterns: string | null;
@@ -50,6 +51,7 @@ interface TurnData {
   responseTokensEst: number | null;
   latencyMs: number | null;
   contextUsedPct: number | null;
+  costUsd: number | null;
   createdAt: string;
 }
 
@@ -631,17 +633,36 @@ export default function SessionDetailPage() {
     ?? (turnScores.length > 0 ? Math.round(turnScores.reduce((a, b) => a + b, 0) / turnScores.length) : null);
   const efficiencyIsEstimated = session.efficiencyScore == null && computedEfficiency != null;
 
-  const costPerTurn = turns.map((t, i) => ({
-    turn: `T${i + 1}`,
-    cost: session.totalCostUsd / (session.totalTurns || 1),
-    tokens: t.responseTokensEst ?? 0,
-  }));
+  // Use actual per-turn costs from transcript when available,
+  // fall back to proportional distribution by prompt tokens
+  const hasActualCosts = turns.some(t => t.costUsd != null && t.costUsd > 0);
+  const totalPromptTokens = turns.reduce((sum, t) => sum + (t.promptTokensEst ?? 0), 0);
+  const costPerTurn = turns.map((t, i) => {
+    let cost: number;
+    if (hasActualCosts && t.costUsd != null) {
+      cost = t.costUsd;
+    } else {
+      const tokenShare = totalPromptTokens > 0
+        ? (t.promptTokensEst ?? 0) / totalPromptTokens
+        : 1 / (turns.length || 1);
+      cost = Math.round(session.totalCostUsd * tokenShare * 10000) / 10000;
+    }
+    return {
+      turn: `T${i + 1}`,
+      cost,
+      tokens: t.promptTokensEst ?? 0,
+    };
+  });
   const contextPerTurn = turns.map((t, i) => ({
     turn: `T${i + 1}`,
     context: t.contextUsedPct ?? 0,
   }));
 
-  const costPerTurnAvg = session.totalTurns > 0 ? session.totalCostUsd / session.totalTurns : 0;
+  // When actual per-turn costs are available, derive total from them for consistency
+  const actualTotalCost = hasActualCosts
+    ? costPerTurn.reduce((sum, c) => sum + c.cost, 0)
+    : session.totalCostUsd;
+  const costPerTurnAvg = session.totalTurns > 0 ? actualTotalCost / session.totalTurns : 0;
 
   return (
     <div className={`min-h-screen bg-[var(--bg-primary)] p-6 md:p-8 transition-opacity duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
@@ -679,7 +700,7 @@ export default function SessionDetailPage() {
             </span>
             {/* Cost */}
             <span className="text-xs text-[var(--text-muted)] flex items-center gap-1" title="Total API cost for all turns in this session">
-              <Coins className="w-3 h-3" /> {formatCost(session.totalCostUsd)}
+              <Coins className="w-3 h-3" /> {formatCost(actualTotalCost)}
             </span>
             {/* Duration */}
             <span className="text-xs text-[var(--text-muted)] flex items-center gap-1" title="Total session duration from first to last turn">
@@ -742,7 +763,7 @@ export default function SessionDetailPage() {
                 <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium flex items-center gap-1.5">
                   <Coins className="w-3 h-3" /> Total Cost
                 </p>
-                <p className="text-xl font-semibold text-[var(--text-primary)] font-mono">{formatCost(session.totalCostUsd)}</p>
+                <p className="text-xl font-semibold text-[var(--text-primary)] font-mono">{formatCost(actualTotalCost)}</p>
               </div>
               <div className="space-y-1" title="Total time from session start to end">
                 <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-medium flex items-center gap-1.5">

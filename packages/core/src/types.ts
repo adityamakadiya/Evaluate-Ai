@@ -7,7 +7,6 @@
 export interface Session {
   id: string;
   tool: string;
-  integration: 'hooks' | 'proxy' | 'mcp';
   projectDir: string | null;
   gitRepo: string | null;
   gitBranch: string | null;
@@ -53,11 +52,13 @@ export interface Turn {
   tokensSavedEst: number | null;
 
   responseTokensEst: number | null;
+  responseText: string | null;
   toolCalls: string | null; // JSON array
   latencyMs: number | null;
 
   wasRetry: boolean;
   contextUsedPct: number | null;
+  intent: string | null;
 
   createdAt: string;
 }

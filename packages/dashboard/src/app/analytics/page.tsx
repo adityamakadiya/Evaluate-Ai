@@ -194,8 +194,8 @@ export default function AnalyticsPage() {
           })),
           tokenWasteBreakdown: (raw.costTrend ?? []).map((d: { date: string; cost: number }) => ({
             date: d.date?.slice(5) ?? '',
-            useful: Math.round((d.cost ?? 0) * 800),
-            wasted: Math.round((d.cost ?? 0) * 200),
+            useful: Math.round((d.cost ?? 0) * 100) / 100,
+            wasted: 0,
           })),
         };
         setData(mapped);

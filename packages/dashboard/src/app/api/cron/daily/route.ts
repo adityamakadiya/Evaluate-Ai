@@ -15,6 +15,31 @@ export async function GET(req: NextRequest) {
     const yesterdayStr = yesterday.toISOString().slice(0, 10);
     const todayStr = now.toISOString().slice(0, 10);
 
+    // ── Stale session cleanup ──────────────────────────────────
+    // Close sessions that have no ended_at and started > 1 hour ago.
+    // This handles: Ctrl+C, SIGKILL, hook failures, network issues.
+    let staleSessions = 0;
+    try {
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+      const { data: staleRows } = await supabase
+        .from('ai_sessions')
+        .select('id, started_at')
+        .is('ended_at', null)
+        .lt('started_at', oneHourAgo);
+
+      if (staleRows && staleRows.length > 0) {
+        for (const row of staleRows) {
+          await supabase
+            .from('ai_sessions')
+            .update({ ended_at: row.started_at })
+            .eq('id', row.id);
+        }
+        staleSessions = staleRows.length;
+      }
+    } catch {
+      // Non-critical — don't fail the whole cron
+    }
+
     // Get all teams
     const { data: teams } = await supabase.from('teams').select('id, name');
     if (!teams || teams.length === 0) {
@@ -204,7 +229,7 @@ export async function GET(req: NextRequest) {
       const promptScoreNorm = avgPromptScore != null ? avgPromptScore / 100 : 0.5;
       const teamHealthScore = Math.round(
         (taskRate * 35) + (activeRate * 25) + (promptScoreNorm * 25) + (Math.min(totalPrs / 10, 1) * 15)
-      ) * 100 / 100;
+      );
 
       // Meeting to code rate: tasks with matched code / total tasks
       const { data: tasksWithCode } = await supabase
@@ -222,7 +247,7 @@ export async function GET(req: NextRequest) {
         .upsert({
           team_id: team.id,
           date: yesterdayStr,
-          team_health_score: Math.min(Math.round(teamHealthScore * 100), 100),
+          team_health_score: Math.min(teamHealthScore, 100),
           active_developers: activeDevelopers,
           total_developers: members.length,
           tasks_total: totalTasksAssigned,
@@ -399,6 +424,7 @@ export async function GET(req: NextRequest) {
       teamsProcessed: teams.length,
       reportsGenerated,
       alertsGenerated,
+      staleSessionsClosed: staleSessions,
     });
   } catch (err) {
     console.error('Cron daily error:', err);
