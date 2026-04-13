@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createHash, randomBytes } from 'node:crypto';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { matchBranchToTask } from '@/lib/services/task-matcher';
 
 function generateId(): string {
   return Date.now().toString(36) + randomBytes(8).toString('hex');
@@ -52,6 +53,7 @@ function pickMetrics(data: Record<string, unknown>): Record<string, unknown> {
   if (data.total_output_tokens != null) update.total_output_tokens = data.total_output_tokens;
   if (data.total_cost_usd != null) update.total_cost_usd = data.total_cost_usd;
   if (data.total_tool_calls != null) update.total_tool_calls = data.total_tool_calls;
+  if (data.tool_usage_summary != null) update.tool_usage_summary = data.tool_usage_summary;
   if (data.files_changed != null) update.files_changed = data.files_changed;
   if (data.avg_prompt_score != null) update.avg_prompt_score = data.avg_prompt_score;
   if (data.efficiency_score != null) update.efficiency_score = data.efficiency_score;
@@ -62,7 +64,8 @@ function pickMetrics(data: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * Auto-compute derived fields (avg_prompt_score, total_tool_calls) from child rows.
+ * Auto-compute derived fields (avg_prompt_score) from child rows.
+ * total_tool_calls is now computed from transcript at session_end by the CLI.
  */
 async function computeDerivedMetrics(
   admin: ReturnType<typeof getSupabaseAdmin>,
@@ -81,22 +84,6 @@ async function computeDerivedMetrics(
       if (turns && turns.length > 0) {
         const avg = turns.reduce((sum: number, t: { heuristic_score: number }) => sum + t.heuristic_score, 0) / turns.length;
         update.avg_prompt_score = Math.round(avg * 10) / 10;
-      }
-    } catch {
-      // non-critical
-    }
-  }
-
-  // Compute total_tool_calls from events if not already provided
-  if (update.total_tool_calls == null) {
-    try {
-      const { count } = await admin
-        .from('ai_tool_events')
-        .select('id', { count: 'exact', head: true })
-        .eq('session_id', sessionId);
-
-      if (count != null && count > 0) {
-        update.total_tool_calls = count;
       }
     } catch {
       // non-critical
@@ -146,6 +133,29 @@ export async function POST(request: Request) {
         }, { onConflict: 'id' });
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+        // Branch-to-task matching (fire-and-forget)
+        if (data.git_branch && data.session_id) {
+          (async () => {
+            try {
+              const matchedTaskId = await matchBranchToTask(data.git_branch, ctx.teamId);
+              if (matchedTaskId) {
+                await admin.from('ai_sessions')
+                  .update({ matched_task_id: matchedTaskId })
+                  .eq('id', data.session_id);
+
+                // Auto-move pending task to in_progress
+                await admin.from('tasks')
+                  .update({ status: 'in_progress', status_updated_at: new Date().toISOString() })
+                  .eq('id', matchedTaskId)
+                  .eq('status', 'pending');
+              }
+            } catch {
+              // non-critical
+            }
+          })();
+        }
+
         break;
       }
 
@@ -190,31 +200,17 @@ export async function POST(request: Request) {
         break;
       }
 
-      case 'tool_use': {
-        const { error } = await admin.from('ai_tool_events').insert({
-          id: generateId(),
-          session_id: data.session_id,
-          team_id: ctx.teamId,
-          developer_id: ctx.memberId,
-          tool_name: data.tool_name,
-          tool_input_summary: data.tool_input_summary,
-          success: data.success ?? null,
-          execution_ms: data.execution_ms ?? null,
-          created_at: new Date().toISOString(),
-        });
-
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-        break;
-      }
 
       // session_update: mid-session metric refresh (from Stop hook).
-      // Updates tokens/cost/turns but does NOT set ended_at.
+      // Updates tokens/cost/turns + last_activity_at but does NOT set ended_at.
       case 'session_update': {
         if (!data.session_id) {
           return NextResponse.json({ error: 'session_id required' }, { status: 400 });
         }
 
         const updateData = pickMetrics(data);
+        // Always track last activity for stale session detection (Ctrl+C)
+        updateData.last_activity_at = data.last_activity_at || new Date().toISOString();
         if (Object.keys(updateData).length === 0) break;
 
         const { error } = await admin
@@ -245,6 +241,27 @@ export async function POST(request: Request) {
           .eq('id', data.session_id);
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+        // Insert enriched activity timeline event (fire-and-forget)
+        admin.from('activity_timeline').insert({
+          team_id: ctx.teamId,
+          developer_id: ctx.memberId,
+          event_type: 'ai_session_end',
+          title: 'AI session completed',
+          description: `${data.total_turns ?? 0} turns, $${(Number(data.total_cost_usd) || 0).toFixed(3)} cost`,
+          metadata: {
+            session_id: data.session_id,
+            total_turns: data.total_turns ?? null,
+            total_cost_usd: data.total_cost_usd ?? null,
+            avg_prompt_score: updateData.avg_prompt_score ?? null,
+            model: data.model ?? null,
+          },
+          source_id: data.session_id,
+          source_table: 'ai_sessions',
+          is_ai_assisted: true,
+          occurred_at: data.ended_at || new Date().toISOString(),
+        }).then(() => {});
+
         break;
       }
 

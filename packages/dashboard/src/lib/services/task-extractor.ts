@@ -109,6 +109,8 @@ export async function persistExtractedTasks(
     let assigneeId: string | null = null;
     if (task.assignee) {
       const normalizedAssignee = task.assignee.toLowerCase().trim();
+
+      // Primary: match by name
       const matched = teamMembers.find((m) => {
         const name = m.name.toLowerCase();
         return (
@@ -119,6 +121,24 @@ export async function persistExtractedTasks(
         );
       });
       assigneeId = matched?.id ?? null;
+
+      // Fallback: match via fireflies_display_names array
+      if (!assigneeId) {
+        try {
+          const { data: firefliesMatch } = await supabase
+            .from('team_members')
+            .select('id')
+            .eq('team_id', teamId)
+            .contains('fireflies_display_names', [task.assignee.trim()])
+            .limit(1)
+            .single();
+          if (firefliesMatch) {
+            assigneeId = firefliesMatch.id;
+          }
+        } catch {
+          // Fallback failed — non-critical
+        }
+      }
     }
 
     const { error } = await supabase.from('tasks').insert({

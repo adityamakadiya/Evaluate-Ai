@@ -51,27 +51,63 @@ export async function cleanupStaleSessions(
   supabase: SupabaseClient,
   teamId: string,
 ): Promise<number> {
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
+  // Find open sessions started more than 30 min ago.
+  // We fetch last_activity_at to determine accurate end time.
   const { data: staleRows } = await supabase
     .from('ai_sessions')
-    .select('id, started_at')
+    .select('id, started_at, last_activity_at, developer_id, total_turns, total_cost_usd, model')
     .eq('team_id', teamId)
     .is('ended_at', null)
-    .lt('started_at', oneHourAgo);
+    .lt('started_at', thirtyMinAgo);
 
   if (!staleRows || staleRows.length === 0) return 0;
 
+  // Only close sessions whose last activity is also older than 30 min
+  const now = Date.now();
+  const stale = staleRows.filter((row) => {
+    const lastActive = row.last_activity_at
+      ? new Date(row.last_activity_at).getTime()
+      : new Date(row.started_at).getTime();
+    return now - lastActive > 30 * 60 * 1000;
+  });
+
+  if (stale.length === 0) return 0;
+
   await Promise.all(
-    staleRows.map((row) =>
-      supabase
+    stale.map(async (row) => {
+      // Use last_activity_at as ended_at (best approximation of actual session end)
+      const endedAt = row.last_activity_at || row.started_at;
+
+      await supabase
         .from('ai_sessions')
-        .update({ ended_at: row.started_at })
-        .eq('id', row.id),
-    ),
+        .update({ ended_at: endedAt })
+        .eq('id', row.id);
+
+      // Create activity timeline entry so auto-closed sessions appear in the feed
+      await supabase.from('activity_timeline').insert({
+        team_id: teamId,
+        developer_id: row.developer_id,
+        event_type: 'ai_session_end',
+        title: 'AI session completed',
+        description: `${row.total_turns ?? 0} turns, $${(Number(row.total_cost_usd) || 0).toFixed(3)} cost (auto-closed)`,
+        metadata: {
+          session_id: row.id,
+          total_turns: row.total_turns ?? null,
+          total_cost_usd: row.total_cost_usd ?? null,
+          model: row.model ?? null,
+          auto_closed: true,
+        },
+        source_id: row.id,
+        source_table: 'ai_sessions',
+        is_ai_assisted: true,
+        occurred_at: endedAt,
+      });
+    }),
   );
 
-  return staleRows.length;
+  return stale.length;
 }
 
 // ── Per-member aggregation ─────────────────────────────────────────
@@ -491,10 +527,134 @@ async function generateAlerts(
     }
   }
 
+  // Weekly trend alerts (cost spike, score decline, activity decline)
+  try {
+    const trendAlerts = await generateWeeklyTrendAlerts(supabase, teamId, members, now);
+    alerts.push(...trendAlerts);
+  } catch {
+    // non-critical
+  }
+
+  // Dropped decisions: meeting tasks still pending with no code after 5 days
+  const droppedDecisionDays = 5;
+  const droppedThreshold = new Date(now);
+  droppedThreshold.setDate(droppedThreshold.getDate() - droppedDecisionDays);
+
+  const { data: droppedTasks } = await supabase
+    .from('tasks')
+    .select('id, title, assignee_id, matched_changes, created_at')
+    .eq('team_id', teamId)
+    .eq('status', 'pending')
+    .eq('source', 'fireflies')
+    .lt('created_at', droppedThreshold.toISOString());
+
+  for (const task of droppedTasks ?? []) {
+    const hasMatchedCode = ((task.matched_changes as string[] | null)?.length ?? 0) > 0;
+    if (!hasMatchedCode) {
+      alerts.push({
+        team_id: teamId,
+        type: 'dropped_decision',
+        severity: 'warning',
+        title: `Dropped decision: ${task.title}`,
+        description: `Meeting action item pending for ${droppedDecisionDays}+ days with no linked code`,
+        developer_id: task.assignee_id ?? undefined,
+        task_id: task.id,
+      });
+    }
+  }
+
   if (alerts.length === 0) return 0;
 
   const { error } = await supabase.from('alerts').insert(alerts);
   return error ? 0 : alerts.length;
+}
+
+// ── Weekly trend alerts ───────────────────────────────────────────
+
+async function generateWeeklyTrendAlerts(
+  supabase: SupabaseClient,
+  teamId: string,
+  members: TeamMember[],
+  now: Date,
+): Promise<AlertRecord[]> {
+  const alerts: AlertRecord[] = [];
+
+  const thisWeekStart = new Date(now);
+  thisWeekStart.setDate(thisWeekStart.getDate() - 7);
+  const lastWeekStart = new Date(now);
+  lastWeekStart.setDate(lastWeekStart.getDate() - 14);
+
+  for (const member of members) {
+    const [{ data: thisWeekSessions }, { data: lastWeekSessions }] = await Promise.all([
+      supabase.from('ai_sessions')
+        .select('total_cost_usd, avg_prompt_score')
+        .eq('developer_id', member.id)
+        .gte('started_at', thisWeekStart.toISOString())
+        .lt('started_at', now.toISOString()),
+      supabase.from('ai_sessions')
+        .select('total_cost_usd, avg_prompt_score')
+        .eq('developer_id', member.id)
+        .gte('started_at', lastWeekStart.toISOString())
+        .lt('started_at', thisWeekStart.toISOString()),
+    ]);
+
+    const thisWeekCost = (thisWeekSessions ?? []).reduce((s, r) => s + (r.total_cost_usd ?? 0), 0);
+    const lastWeekCost = (lastWeekSessions ?? []).reduce((s, r) => s + (r.total_cost_usd ?? 0), 0);
+
+    // Cost spike: >50% increase
+    if (lastWeekCost > 0 && thisWeekCost > lastWeekCost * 1.5) {
+      const pctIncrease = Math.round(((thisWeekCost - lastWeekCost) / lastWeekCost) * 100);
+      alerts.push({
+        team_id: teamId,
+        type: 'cost_spike',
+        severity: 'warning',
+        title: `Cost spike: ${member.name}`,
+        description: `AI cost increased ${pctIncrease}% this week ($${thisWeekCost.toFixed(2)} vs $${lastWeekCost.toFixed(2)} last week)`,
+        developer_id: member.id,
+      });
+    }
+
+    // Score decline: >15 points drop
+    const thisScores = (thisWeekSessions ?? []).filter(s => s.avg_prompt_score != null);
+    const lastScores = (lastWeekSessions ?? []).filter(s => s.avg_prompt_score != null);
+    if (thisScores.length > 0 && lastScores.length > 0) {
+      const thisAvg = thisScores.reduce((s, r) => s + (r.avg_prompt_score ?? 0), 0) / thisScores.length;
+      const lastAvg = lastScores.reduce((s, r) => s + (r.avg_prompt_score ?? 0), 0) / lastScores.length;
+      if (lastAvg - thisAvg > 15) {
+        alerts.push({
+          team_id: teamId,
+          type: 'score_decline',
+          severity: 'warning',
+          title: `Score decline: ${member.name}`,
+          description: `Prompt score dropped from ${Math.round(lastAvg)} to ${Math.round(thisAvg)} this week`,
+          developer_id: member.id,
+        });
+      }
+    }
+
+    // Activity decline: was active last week, zero this week
+    if ((lastWeekSessions ?? []).length > 0 && (thisWeekSessions ?? []).length === 0) {
+      const { data: thisWeekCode } = await supabase
+        .from('code_changes')
+        .select('id')
+        .eq('developer_id', member.id)
+        .gte('created_at', thisWeekStart.toISOString())
+        .limit(1);
+
+      if (!thisWeekCode || thisWeekCode.length === 0) {
+        alerts.push({
+          team_id: teamId,
+          type: 'activity_decline',
+          severity: 'warning',
+          title: `Activity drop: ${member.name}`,
+          description: 'No AI sessions or code activity this week (was active last week)',
+          developer_id: member.id,
+        });
+      }
+    }
+  }
+
+  return alerts;
 }
 
 // ── Main entry point ───────────────────────────────────────────────

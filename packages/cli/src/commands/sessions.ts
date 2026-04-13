@@ -49,11 +49,6 @@ interface TurnRow {
   suggestion_text?: string;
 }
 
-interface ToolEvent {
-  toolName?: string;
-  tool_name?: string;
-}
-
 interface SessionDetailResponse {
   id: string;
   projectDir?: string;
@@ -77,7 +72,7 @@ interface SessionDetailResponse {
   efficiency_score?: number;
   analysis?: string | SessionAnalysis;
   turns?: TurnRow[];
-  toolEvents?: ToolEvent[];
+  toolUsageSummary?: Record<string, number>;
 }
 
 /**
@@ -156,7 +151,7 @@ async function showSession(sessionId: string): Promise<void> {
     }
   }
 
-  const { ok, data: response } = await apiRequest<{ session: SessionDetailResponse; turns: TurnRow[]; toolEvents: ToolEvent[] }>(`/api/sessions/${fullId}`);
+  const { ok, data: response } = await apiRequest<{ session: SessionDetailResponse; turns: TurnRow[]; toolUsageSummary: Record<string, number> }>(`/api/sessions/${fullId}`);
 
   if (!ok || !response?.session) {
     console.log(chalk.red(`  Session not found: ${sessionId}`));
@@ -165,7 +160,7 @@ async function showSession(sessionId: string): Promise<void> {
 
   const session = response.session;
   session.turns = response.turns;
-  session.toolEvents = response.toolEvents;
+  session.toolUsageSummary = response.toolUsageSummary;
 
   // Session header
   printHeader(`Session ${session.id.slice(0, 10)}`);
@@ -265,19 +260,15 @@ async function showSession(sessionId: string): Promise<void> {
     console.log(table.toString());
   }
 
-  // Tool events
-  const events = session.toolEvents ?? [];
+  // Tool usage summary (computed from transcript at session end)
+  const toolSummary = session.toolUsageSummary ?? {};
+  const toolEntries = Object.entries(toolSummary).sort((a, b) => b[1] - a[1]);
 
-  if (events.length > 0) {
+  if (toolEntries.length > 0) {
+    const totalTools = toolEntries.reduce((sum, [, count]) => sum + count, 0);
     console.log('');
-    console.log(chalk.bold(`  Tool Calls (${events.length})`));
-    const toolCounts: Record<string, number> = {};
-    for (const e of events) {
-      const name = e.toolName ?? e.tool_name ?? 'unknown';
-      toolCounts[name] = (toolCounts[name] ?? 0) + 1;
-    }
-    const sorted = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]);
-    for (const [name, count] of sorted.slice(0, 10)) {
+    console.log(chalk.bold(`  Tool Calls (${totalTools})`));
+    for (const [name, count] of toolEntries.slice(0, 10)) {
       console.log(`    ${chalk.white(name.padEnd(25))} ${count}x`);
     }
   }

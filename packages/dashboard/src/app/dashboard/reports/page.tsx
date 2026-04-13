@@ -100,11 +100,21 @@ function getScoreBg(score: number): string {
 }
 
 function formatDate(dateStr: string): string {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
   });
+}
+
+/** Build YYYY-MM-DD from local date parts (no timezone drift) */
+function toDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function Skeleton({ className = '' }: { className?: string }) {
@@ -124,20 +134,29 @@ function LoadingSkeleton() {
   );
 }
 
+function getTodayStr(): string {
+  return toDateString(new Date());
+}
+
+function getWeekStartStr(): string {
+  const now = new Date();
+  const dayOfWeek = now.getDay() || 7;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek + 1);
+  return toDateString(monday);
+}
+
 export default function ReportsPage() {
   const [tab, setTab] = useState<TabType>('daily');
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [weekStart, setWeekStart] = useState(() => {
-    const now = new Date();
-    const dayOfWeek = now.getDay() || 7;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - dayOfWeek + 1);
-    return monday.toISOString().slice(0, 10);
-  });
+  // Use empty string as SSR-safe default; set real date on mount to avoid hydration mismatch
+  const [selectedDate, setSelectedDate] = useState('');
+  const [weekStart, setWeekStart] = useState('');
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setSelectedDate(getTodayStr());
+    setWeekStart(getWeekStartStr());
+    setMounted(true);
+  }, []);
 
   const { user: authUser } = useAuth();
   const [dailyReports, setDailyReports] = useState<DailyReport[]>([]);
@@ -146,7 +165,7 @@ export default function ReportsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchReports = useCallback(() => {
-    if (!authUser) return;
+    if (!authUser || !mounted) return;
 
     if (tab === 'daily') {
       fetch(`/api/reports/daily?date=${selectedDate}`)
@@ -171,24 +190,24 @@ export default function ReportsPage() {
         })
         .catch(err => { setError(err.message); setLoading(false); });
     }
-  }, [tab, selectedDate, weekStart, authUser]);
+  }, [tab, selectedDate, weekStart, authUser, mounted]);
 
   useEffect(() => {
     fetchReports();
   }, [fetchReports]);
 
   const navigateDate = (direction: number) => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    d.setDate(d.getDate() + direction);
-    setSelectedDate(d.toISOString().slice(0, 10));
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const next = new Date(y, m - 1, d + direction);
+    setSelectedDate(toDateString(next));
     setLoading(true);
     setError(null);
   };
 
   const navigateWeek = (direction: number) => {
-    const d = new Date(weekStart + 'T00:00:00');
-    d.setDate(d.getDate() + direction * 7);
-    setWeekStart(d.toISOString().slice(0, 10));
+    const [y, m, d] = weekStart.split('-').map(Number);
+    const next = new Date(y, m - 1, d + direction * 7);
+    setWeekStart(toDateString(next));
     setLoading(true);
     setError(null);
   };
@@ -238,7 +257,7 @@ export default function ReportsPage() {
       </div>
 
       {/* Date picker */}
-      {tab === 'daily' && (
+      {mounted && tab === 'daily' && (
         <div className="animate-section mb-6 flex items-center gap-3">
           <button
             onClick={() => navigateDate(-1)}
@@ -267,7 +286,7 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {tab === 'weekly' && (
+      {mounted && tab === 'weekly' && (
         <div className="animate-section mb-6 flex items-center gap-3">
           <button
             onClick={() => navigateWeek(-1)}

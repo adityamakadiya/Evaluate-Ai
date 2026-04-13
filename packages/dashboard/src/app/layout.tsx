@@ -15,6 +15,7 @@ import {
   Bell,
   Settings,
   BookOpen,
+  Lightbulb,
   RefreshCw,
   Sun,
   Moon,
@@ -37,6 +38,7 @@ const navItems = [
   { href: "/dashboard/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/dashboard/integrations", label: "Integrations", icon: Plug },
   { href: "/dashboard/reports", label: "Reports", icon: FileText },
+  { href: "/dashboard/insights", label: "Insights", icon: Lightbulb },
   { href: "/dashboard/alerts", label: "Alerts", icon: Bell },
   { href: "/docs", label: "Docs", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -46,6 +48,7 @@ const navItems = [
 const MANAGER_ONLY_HREFS = new Set([
   '/dashboard/meetings',
   '/dashboard/reports',
+  '/dashboard/insights',
   '/dashboard/alerts',
   '/settings',
 ]);

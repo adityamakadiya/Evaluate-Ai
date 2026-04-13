@@ -5,7 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabase-server';
 const VALID_FILTERS = new Set(['ai', 'code', 'meeting', 'task']);
 
 const FILTER_EVENT_TYPES: Record<string, string[]> = {
-  ai: ['ai_prompt', 'ai_response', 'ai_session'],
+  ai: ['ai_prompt', 'ai_response', 'ai_session', 'ai_session_start', 'ai_session_end'],
   code: ['commit', 'pr_opened', 'pr_merged', 'review'],
   meeting: ['meeting'],
   task: ['task_completed', 'task_assigned'],

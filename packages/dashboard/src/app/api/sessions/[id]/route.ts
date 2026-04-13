@@ -59,18 +59,11 @@ export async function GET(
       developerName = memberRow?.name ?? null;
     }
 
-    const [{ data: turnsData }, { data: toolEventsData }] = await Promise.all([
-      supabase
-        .from('ai_turns')
-        .select('*')
-        .eq('session_id', id)
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('ai_tool_events')
-        .select('*')
-        .eq('session_id', id)
-        .order('created_at', { ascending: true }),
-    ]);
+    const { data: turnsData } = await supabase
+      .from('ai_turns')
+      .select('*')
+      .eq('session_id', id)
+      .order('created_at', { ascending: true });
 
     // Parse analysis — it's JSONB in Supabase so it may already be an object
     let parsedAnalysis = null;
@@ -178,12 +171,14 @@ export async function GET(
       }
     } catch { /* never fail the API */ }
 
-    // Detect stale sessions: no ended_at but session started > 30 min ago.
-    // This means the SessionEnd hook likely failed to fire.
-    const sessionStartedAt = session.started_at ? new Date(session.started_at).getTime() : 0;
-    const isStaleSession = !session.ended_at && sessionStartedAt > 0
-      && (Date.now() - sessionStartedAt) > 30 * 60 * 1000;
-    const effectiveEndedAt = session.ended_at ?? (isStaleSession ? session.started_at : null);
+    // Detect stale sessions: no ended_at and no activity for > 30 min.
+    // This means the SessionEnd hook likely failed to fire (e.g. Ctrl+C).
+    const lastActiveMs = session.last_activity_at
+      ? new Date(session.last_activity_at).getTime()
+      : (session.started_at ? new Date(session.started_at).getTime() : 0);
+    const isStaleSession = !session.ended_at && lastActiveMs > 0
+      && (Date.now() - lastActiveMs) > 30 * 60 * 1000;
+    const effectiveEndedAt = session.ended_at ?? (isStaleSession ? (session.last_activity_at || session.started_at) : null);
 
     // Transform session to camelCase
     const sessionOut = {
@@ -234,22 +229,13 @@ export async function GET(
       createdAt: t.created_at,
     }));
 
-    // Transform tool events to camelCase
-    const parsedToolEvents = (toolEventsData ?? []).map(e => ({
-      id: e.id,
-      sessionId: e.session_id,
-      turnId: e.turn_id,
-      toolName: e.tool_name,
-      toolInputSummary: e.tool_input_summary,
-      success: e.success == null ? null : Boolean(e.success),
-      executionMs: e.execution_ms,
-      createdAt: e.created_at,
-    }));
+    // Tool usage summary from session (computed from transcript at session_end)
+    const toolUsageSummary = session.tool_usage_summary ?? {};
 
     return NextResponse.json({
       session: sessionOut,
       turns: parsedTurns,
-      toolEvents: parsedToolEvents,
+      toolUsageSummary,
       analysis: parsedAnalysis,
     });
   } catch (err) {

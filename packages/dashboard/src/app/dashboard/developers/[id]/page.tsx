@@ -20,6 +20,7 @@ import DeveloperTimeline from '@/components/developer-timeline';
 import DeveloperWorkTab from '@/components/developer-work-tab';
 import DeveloperAiTab from '@/components/developer-ai-tab';
 import DeveloperInsightsTab from '@/components/developer-insights-tab';
+import LinkAccountsSection from '@/components/link-accounts-section';
 
 type Tab = 'sessions' | 'timeline' | 'work' | 'ai' | 'insights';
 
@@ -222,6 +223,14 @@ export default function DeveloperDetailPage() {
               </div>
             </div>
           </header>
+
+          {/* Linked Accounts */}
+          <div className="animate-section mb-6">
+            <LinkAccountsSection
+              developerId={id}
+              canEdit={authUser?.role === 'owner' || authUser?.role === 'manager' || authUser?.memberId === id}
+            />
+          </div>
 
           {/* Tabs */}
           <div className="animate-section mb-6 border-b border-border-primary">

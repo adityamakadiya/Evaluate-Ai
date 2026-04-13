@@ -121,6 +121,86 @@ async function aiMatch(
   }
 }
 
+// ---------- Branch-to-Task Matching ----------
+
+const BRANCH_PREFIXES = new Set([
+  'feat', 'feature', 'fix', 'bugfix', 'hotfix', 'chore', 'refactor',
+  'docs', 'test', 'ci', 'build', 'perf', 'style', 'release',
+]);
+
+/**
+ * Match a git branch name to an existing open task.
+ * Parses branch names like "feat/TASK-123-add-auth" or "fix/login-bug".
+ * Returns the matched task ID or null.
+ */
+export async function matchBranchToTask(
+  branchName: string,
+  teamId: string,
+): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
+
+  // Split branch on / - _ and filter out common prefixes
+  const tokens = branchName
+    .split(/[/\-_]/)
+    .map((t) => t.toLowerCase().trim())
+    .filter((t) => t.length >= 2 && !BRANCH_PREFIXES.has(t));
+
+  if (tokens.length === 0) return null;
+
+  // Check for explicit task/ticket ID patterns (e.g., TASK-123, EAI-456)
+  const idPattern = /^[a-z]+-\d+$/i;
+  const branchFull = branchName.toLowerCase();
+  const ticketMatch = branchFull.match(/([a-z]+-\d+)/i);
+  if (ticketMatch) {
+    const { data: taskById } = await supabase
+      .from('tasks')
+      .select('id')
+      .eq('team_id', teamId)
+      .in('status', ['pending', 'in_progress'])
+      .ilike('external_id', `%${ticketMatch[1]}%`)
+      .limit(1)
+      .single();
+
+    if (taskById) return taskById.id;
+  }
+
+  // Keyword matching against open tasks
+  const { data: openTasks } = await supabase
+    .from('tasks')
+    .select('id, title, description, project, assignee_id, status')
+    .eq('team_id', teamId)
+    .in('status', ['pending', 'in_progress'])
+    .limit(100);
+
+  if (!openTasks || openTasks.length === 0) return null;
+
+  // Build a synthetic "code change" text from branch tokens for keyword matching
+  const branchText = tokens.join(' ');
+
+  let bestMatch: { taskId: string; score: number } | null = null;
+
+  for (const task of openTasks) {
+    const taskText = `${task.title} ${task.description ?? ''} ${task.project ?? ''}`.toLowerCase();
+
+    // Count how many branch tokens appear in the task text
+    let matched = 0;
+    for (const token of tokens) {
+      if (token.length >= 3 && taskText.includes(token)) matched++;
+    }
+
+    const filteredTokens = tokens.filter((t) => t.length >= 3);
+    if (filteredTokens.length === 0) continue;
+
+    const score = Math.round((matched / filteredTokens.length) * 100);
+
+    if (score >= 40 && (!bestMatch || score > bestMatch.score)) {
+      bestMatch = { taskId: task.id, score };
+    }
+  }
+
+  return bestMatch?.taskId ?? null;
+}
+
 // ---------- Main Matching Function ----------
 
 /**
@@ -228,10 +308,10 @@ export async function matchCodeChangeToTasks(
 
   // Update each matched task
   for (const match of matches) {
-    // Append commit SHA to matched_changes array
+    // Append code change to matched_changes array
     const { data: task } = await supabase
       .from('tasks')
-      .select('matched_changes, status, alignment_score')
+      .select('matched_changes, status, alignment_score, first_commit_at, first_pr_at, completed_at, created_at')
       .eq('id', match.taskId)
       .single();
 
@@ -249,6 +329,14 @@ export async function matchCodeChangeToTasks(
       matched_changes: updatedChanges,
       alignment_score: newScore,
     };
+
+    // Cycle time tracking: record first commit/PR timestamps
+    if (!task.first_commit_at && codeChange.type === 'commit') {
+      updatePayload.first_commit_at = new Date().toISOString();
+    }
+    if (!task.first_pr_at && codeChange.type === 'pr_opened') {
+      updatePayload.first_pr_at = new Date().toISOString();
+    }
 
     // Auto-status update logic:
     // Determine if this is a "default branch" commit (direct push, no PR)
@@ -277,6 +365,16 @@ export async function matchCodeChangeToTasks(
         updatePayload.status = 'completed';
         updatePayload.status_updated_at = new Date().toISOString();
         autoStatusUpdates++;
+      }
+    }
+
+    // Calculate cycle time when task completes
+    if (updatePayload.status === 'completed' && !task.completed_at) {
+      const completedAt = new Date().toISOString();
+      updatePayload.completed_at = completedAt;
+      if (task.created_at) {
+        const cycleMs = new Date(completedAt).getTime() - new Date(task.created_at).getTime();
+        updatePayload.cycle_time_hours = Math.round((cycleMs / 3_600_000) * 10) / 10;
       }
     }
 

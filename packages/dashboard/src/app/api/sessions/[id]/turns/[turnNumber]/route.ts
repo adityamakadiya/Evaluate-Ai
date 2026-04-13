@@ -362,7 +362,7 @@ export async function GET(
     // Fetch session data
     const { data: session, error: sessionErr } = await supabase
       .from('ai_sessions')
-      .select('id, model, project_dir, git_branch, started_at, ended_at, total_turns, developer_id')
+      .select('id, model, project_dir, git_branch, started_at, ended_at, last_activity_at, total_turns, developer_id')
       .eq('id', id)
       .single();
 
@@ -413,14 +413,16 @@ export async function GET(
       turn.prompt_tokens_est as number | null
     );
 
-    // Detect stale sessions: no ended_at but session started > 30 min ago
-    // and no response data. This means the SessionEnd hook likely failed.
-    const sessionStartedAt = session.started_at ? new Date(session.started_at).getTime() : 0;
-    const isStaleSession = !session.ended_at && sessionStartedAt > 0
-      && (Date.now() - sessionStartedAt) > 30 * 60 * 1000;
+    // Detect stale sessions: no ended_at and no activity for > 30 min.
+    // This means the SessionEnd hook likely failed to fire (e.g. Ctrl+C).
+    const lastActiveMs = session.last_activity_at
+      ? new Date(session.last_activity_at).getTime()
+      : (session.started_at ? new Date(session.started_at).getTime() : 0);
+    const isStaleSession = !session.ended_at && lastActiveMs > 0
+      && (Date.now() - lastActiveMs) > 30 * 60 * 1000;
 
     // Use effective endedAt: if session is stale, treat it as ended
-    const effectiveEndedAt = session.ended_at ?? (isStaleSession ? session.started_at : null);
+    const effectiveEndedAt = session.ended_at ?? (isStaleSession ? (session.last_activity_at || session.started_at) : null);
 
     return NextResponse.json({
       turn: {

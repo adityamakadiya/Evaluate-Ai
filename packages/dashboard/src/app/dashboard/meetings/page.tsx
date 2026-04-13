@@ -21,6 +21,7 @@ import MeetingDetailPanel, {
   type Meeting,
   type OverallStats,
 } from '@/components/meetings/meeting-detail-panel';
+import MeetingSearch from '@/components/meetings/meeting-search';
 
 // ═══════════════════════════════════════
 //  STATS
@@ -321,6 +322,9 @@ export default function MeetingsPage() {
 
       {!loading && !error && meetings.length > 0 && (
         <>
+          {/* Search */}
+          <MeetingSearch onSelectMeeting={(id) => setSelectedId(id)} />
+
           <StatsRow stats={overallStats} />
 
           <div className="animate-section">

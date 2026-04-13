@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, appendFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -67,9 +67,84 @@ async function sendToApi(event: string, data: Record<string, unknown>): Promise<
     });
 
     clearTimeout(timeout);
-    return res.ok;
+    if (!res.ok) {
+      appendToQueue(event, data);
+      return false;
+    }
+    return true;
   } catch {
+    appendToQueue(event, data);
     return false;
+  }
+}
+
+// ── Event queue (offline resilience) ─────────────────────────
+
+const QUEUE_DIR = join(homedir(), '.evaluateai-v2');
+const QUEUE_PATH = join(QUEUE_DIR, 'queue.jsonl');
+const MAX_QUEUE_EVENTS = 1000;
+
+/**
+ * Append a failed event to the local queue file for later retry.
+ * Uses appendFileSync — typically sub-1ms, safe for hook budget.
+ */
+function appendToQueue(event: string, data: Record<string, unknown>): void {
+  try {
+    if (!existsSync(QUEUE_DIR)) mkdirSync(QUEUE_DIR, { recursive: true });
+    const line = JSON.stringify({ event, ...data, _queuedAt: new Date().toISOString() }) + '\n';
+    appendFileSync(QUEUE_PATH, line, 'utf-8');
+  } catch {
+    // Queue write failed — non-critical, don't crash
+  }
+}
+
+/**
+ * Flush queued events to the API. Fully async, fire-and-forget.
+ * Reads the queue, replays events in order, rewrites with failures only.
+ */
+async function flushQueue(): Promise<void> {
+  try {
+    if (!existsSync(QUEUE_PATH)) return;
+
+    const raw = readFileSync(QUEUE_PATH, 'utf-8').trim();
+    if (!raw) return;
+
+    const lines = raw.split('\n').filter(Boolean);
+    if (lines.length === 0) return;
+
+    // Cap to MAX_QUEUE_EVENTS (keep newest)
+    const entries = lines.slice(-MAX_QUEUE_EVENTS);
+
+    // Delete queue file before processing to avoid double-flush from concurrent hooks
+    try { unlinkSync(QUEUE_PATH); } catch { /* ignore */ }
+
+    const failed: string[] = [];
+
+    for (const line of entries) {
+      try {
+        const parsed = JSON.parse(line);
+        const { event, _queuedAt, ...rest } = parsed;
+        if (!event) continue;
+
+        const ok = await sendToApi(event, rest);
+        if (!ok) {
+          failed.push(line);
+        }
+      } catch {
+        // Malformed line — drop it
+      }
+    }
+
+    // Rewrite queue with only failed events
+    if (failed.length > 0) {
+      try {
+        writeFileSync(QUEUE_PATH, failed.join('\n') + '\n', 'utf-8');
+      } catch {
+        // non-critical
+      }
+    }
+  } catch {
+    // Queue flush failed — non-critical
   }
 }
 
@@ -199,6 +274,9 @@ function resolveTranscriptPath(payload: Record<string, unknown>): string | null 
  * Called from bin/evalai.js when `evalai hook <event>` runs.
  */
 export async function handleHookEvent(payload: Record<string, unknown>): Promise<void> {
+  // Attempt to flush any queued events from previous failures (fire-and-forget)
+  flushQueue().catch(() => {});
+
   const event = String(payload.type || '');
 
   switch (event) {
@@ -209,14 +287,6 @@ export async function handleHookEvent(payload: Record<string, unknown>): Promise
     case 'prompt-submit':
     case 'UserPromptSubmit':
       await handlePromptSubmit(payload);
-      break;
-    case 'pre-tool':
-    case 'PreToolUse':
-      await handlePreTool(payload);
-      break;
-    case 'post-tool':
-    case 'PostToolUse':
-      await handlePostTool(payload);
       break;
     case 'stop':
     case 'Stop':
@@ -298,39 +368,6 @@ async function handlePromptSubmit(payload: Record<string, unknown>): Promise<voi
   }
 }
 
-async function handlePreTool(payload: Record<string, unknown>): Promise<void> {
-  try {
-    const sid = String(payload.session_id || '');
-    if (!sid) return;
-
-    // Fire-and-forget — tool events are non-critical
-    sendToApi('tool_use', {
-      session_id: sid,
-      tool_name: String(payload.tool_name || 'unknown'),
-      tool_input_summary: payload.tool_input ? String(payload.tool_input).substring(0, 200) : null,
-    }).catch(() => {});
-  } catch {
-    // Never fail
-  }
-}
-
-async function handlePostTool(payload: Record<string, unknown>): Promise<void> {
-  try {
-    const sid = String(payload.session_id || '');
-    if (!sid) return;
-
-    // Fire-and-forget — tool events are non-critical
-    sendToApi('tool_use', {
-      session_id: sid,
-      tool_name: String(payload.tool_name || 'unknown'),
-      success: payload.success === true,
-      execution_ms: typeof payload.execution_ms === 'number' ? payload.execution_ms : null,
-    }).catch(() => {});
-  } catch {
-    // Never fail
-  }
-}
-
 /**
  * Stop fires after every Claude response. Update running metrics
  * via session_update (does NOT set ended_at).
@@ -351,6 +388,16 @@ async function handleStop(payload: Record<string, unknown>): Promise<void> {
         const summary = getSessionSummary(transcriptPath);
         if (!summary) return;
 
+        // Compute tool usage from transcript (ensures data survives Ctrl+C / stale sessions)
+        const toolCounts: Record<string, number> = {};
+        let totalToolCalls = 0;
+        for (const resp of summary.responses) {
+          for (const toolName of resp.toolCalls) {
+            toolCounts[toolName] = (toolCounts[toolName] ?? 0) + 1;
+            totalToolCalls++;
+          }
+        }
+
         await sendToApi('session_update', {
           session_id: sid,
           model: summary.model,
@@ -358,6 +405,9 @@ async function handleStop(payload: Record<string, unknown>): Promise<void> {
           total_output_tokens: summary.totalOutputTokens,
           total_cost_usd: summary.totalCostUsd,
           total_turns: summary.turns,
+          total_tool_calls: totalToolCalls,
+          tool_usage_summary: toolCounts,
+          last_activity_at: new Date().toISOString(),
         });
       } catch {
         // Non-critical — next Stop will retry
@@ -392,7 +442,7 @@ async function handleSessionEnd(payload: Record<string, unknown>): Promise<void>
           ended_at: now,
         };
 
-        // Read transcript for final token/cost/turn data
+        // Read transcript for final token/cost/turn/tool data
         const transcriptPath = resolveTranscriptPath(payload);
         if (transcriptPath) {
           try {
@@ -404,6 +454,18 @@ async function handleSessionEnd(payload: Record<string, unknown>): Promise<void>
               sessionData.total_output_tokens = summary.totalOutputTokens;
               sessionData.total_cost_usd = summary.totalCostUsd;
               sessionData.total_turns = summary.turns;
+
+              // Compute tool usage from transcript (replaces per-event tool_use API calls)
+              const toolCounts: Record<string, number> = {};
+              let totalToolCalls = 0;
+              for (const resp of summary.responses) {
+                for (const toolName of resp.toolCalls) {
+                  toolCounts[toolName] = (toolCounts[toolName] ?? 0) + 1;
+                  totalToolCalls++;
+                }
+              }
+              sessionData.total_tool_calls = totalToolCalls;
+              sessionData.tool_usage_summary = toolCounts;
             }
           } catch {
             // Transcript parsing failed — still send ended_at
@@ -418,14 +480,8 @@ async function handleSessionEnd(payload: Record<string, unknown>): Promise<void>
           await sendToApi('session_end', sessionData);
         }
 
-        // Activity timeline (fire-and-forget)
-        sendToApi('activity', {
-          event_type: 'ai_session_end',
-          title: 'AI session ended',
-          description: 'Session completed',
-          developer_name: '',
-          metadata: { session_id: sid },
-        }).catch(() => {});
+        // Activity timeline entry is created server-side in the ingest route
+        // when processing the session_end event (with enriched metrics).
       } catch {
         // Non-critical — stale session detection will handle cleanup
       }

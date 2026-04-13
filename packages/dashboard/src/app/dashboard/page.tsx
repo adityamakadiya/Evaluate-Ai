@@ -56,6 +56,8 @@ const EVENT_ICONS: Record<string, { icon: typeof Bot; label: string }> = {
   ai_prompt: { icon: Bot, label: 'AI Prompt' },
   ai_response: { icon: Bot, label: 'AI Response' },
   ai_session: { icon: Bot, label: 'AI Session' },
+  ai_session_start: { icon: Bot, label: 'AI Session' },
+  ai_session_end: { icon: Bot, label: 'AI Session' },
   commit: { icon: GitCommit, label: 'Commit' },
   pr_opened: { icon: GitPullRequest, label: 'PR Opened' },
   pr_merged: { icon: GitMerge, label: 'PR Merged' },
@@ -69,6 +71,8 @@ const EVENT_EMOJIS: Record<string, string> = {
   ai_prompt: '\u{1F916}',
   ai_response: '\u{1F916}',
   ai_session: '\u{1F916}',
+  ai_session_start: '\u{1F916}',
+  ai_session_end: '\u{1F916}',
   commit: '\u{1F4BB}',
   pr_opened: '\u{1F500}',
   pr_merged: '\u{1F500}',
@@ -289,30 +293,9 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <div className="space-y-1">
-                  {data.timeline.map(event => {
-                    const evtConfig = EVENT_ICONS[event.eventType];
-                    const EventIcon = evtConfig?.icon ?? Activity;
-                    const emoji = EVENT_EMOJIS[event.eventType] ?? '';
-                    return (
-                      <div
-                        key={event.id}
-                        className="flex items-start gap-3 px-3 py-2.5 rounded-md hover:bg-bg-elevated transition-colors"
-                      >
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-bg-elevated">
-                          <EventIcon className="h-3.5 w-3.5 text-text-muted" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm text-text-primary truncate">
-                            <span className="mr-1">{emoji}</span>
-                            {event.title}
-                          </p>
-                          <p className="text-xs text-text-muted mt-0.5">
-                            {event.developerName} {'\u00B7'} {timeAgo(event.createdAt)}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {data.timeline.map(event => (
+                    <ActivityFeedItem key={event.id} event={event} />
+                  ))}
                 </div>
               )}
             </div>
@@ -361,6 +344,126 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function ActivityFeedItem({ event }: { event: TimelineEvent }) {
+  const evtConfig = EVENT_ICONS[event.eventType];
+  const EventIcon = evtConfig?.icon ?? Activity;
+  const emoji = EVENT_EMOJIS[event.eventType] ?? '';
+  const meta = event.metadata ?? {};
+
+  const sessionId = meta.session_id as string | undefined;
+  const totalTurns = meta.total_turns as number | undefined;
+  const cost = (meta.total_cost_usd ?? meta.cost) as number | undefined;
+  const model = meta.model as string | undefined;
+  const score = (meta.avg_prompt_score ?? meta.score) as number | undefined;
+  const repo = meta.repo as string | undefined;
+  const filesChanged = meta.files_changed as number | undefined;
+  const isSessionEnd = event.eventType === 'ai_session_end';
+  const isSessionStart = event.eventType === 'ai_session_start';
+  const isCommit = event.eventType === 'commit';
+  const sha = meta.sha as string | undefined;
+
+  // Extract project name from description for session starts
+  const projectName = isSessionStart && event.description
+    ? event.description.replace('Claude Code session in ', '')
+    : null;
+
+  // Shorter model display
+  const shortModel = model
+    ? model.replace('claude-', '').replace('-20251001', '').replace('-20250301', '')
+    : null;
+
+  return (
+    <div className="flex items-start gap-3 px-3 py-2.5 rounded-md hover:bg-bg-elevated transition-colors">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-bg-elevated">
+        <EventIcon className="h-3.5 w-3.5 text-text-muted" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-text-primary truncate">
+          <span className="mr-1">{emoji}</span>
+          {event.title}
+          {isSessionStart && projectName && (
+            <span className="text-text-muted font-normal"> in {projectName}</span>
+          )}
+        </p>
+
+        {/* Rich details for session end */}
+        {isSessionEnd && (
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {totalTurns != null && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
+                {totalTurns} turns
+              </span>
+            )}
+            {cost != null && cost > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
+                ${cost.toFixed(2)}
+              </span>
+            )}
+            {shortModel && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
+                {shortModel}
+              </span>
+            )}
+            {score != null && (
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                score >= 80 ? 'bg-emerald-900/30 text-emerald-400' :
+                score >= 60 ? 'bg-blue-900/30 text-blue-400' :
+                score >= 40 ? 'bg-yellow-900/30 text-yellow-400' :
+                'bg-red-900/30 text-red-400'
+              }`}>
+                {Math.round(score)}
+              </span>
+            )}
+            {sessionId && (
+              <Link
+                href={`/dashboard/sessions/${sessionId}`}
+                className="text-[10px] text-[#8b5cf6] hover:underline"
+              >
+                View session
+              </Link>
+            )}
+          </div>
+        )}
+
+        {/* Rich details for commits */}
+        {isCommit && (
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {repo && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
+                {repo}
+              </span>
+            )}
+            {filesChanged != null && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
+                {filesChanged} files
+              </span>
+            )}
+            {repo && sha && (
+              <a
+                href={`https://github.com/${repo}/commit/${sha}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-[#8b5cf6] hover:underline"
+              >
+                {sha.slice(0, 7)}
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Description for non-enriched events */}
+        {!isSessionEnd && !isSessionStart && !isCommit && event.description && (
+          <p className="text-xs text-text-muted mt-0.5 line-clamp-1">{event.description}</p>
+        )}
+
+        <p className="text-xs text-text-muted mt-0.5">
+          {event.developerName} {'\u00B7'} {timeAgo(event.createdAt)}
+        </p>
+      </div>
     </div>
   );
 }

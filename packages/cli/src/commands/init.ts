@@ -5,13 +5,12 @@ import { getClaudeSettingsPath, ensureDataDir } from '../utils/paths.js';
 import { printHeader } from '../utils/display.js';
 
 /**
- * The 6 Claude Code hook events we register.
+ * The 4 Claude Code hook events we register.
+ * PreToolUse/PostToolUse removed — tool data is computed from transcript at session end.
  */
 const HOOK_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
-  'PreToolUse',
-  'PostToolUse',
   'Stop',
   'SessionEnd',
 ] as const;
@@ -91,7 +90,9 @@ function checkHooks(settings: Record<string, unknown>): Map<string, boolean> {
  */
 function removeHooks(settings: Record<string, unknown>): Record<string, unknown> {
   const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
-  for (const event of HOOK_EVENTS) {
+  // Iterate ALL hook events in settings (not just HOOK_EVENTS) to clean up
+  // deprecated hooks like PreToolUse/PostToolUse from older versions.
+  for (const event of Object.keys(hooks)) {
     const hookEntry = hooks[event];
 
     if (Array.isArray(hookEntry)) {
@@ -217,7 +218,7 @@ export const initCommand = new Command('init')
     // Merge: add our hooks, preserve any others the user has
     settings.hooks = { ...existingHooks, ...newHooks };
     writeSettings(settingsPath, settings);
-    console.log(chalk.green('  ✓ 6 hooks installed'));
+    console.log(chalk.green(`  ✓ ${HOOK_EVENTS.length} hooks installed`));
 
     // 4. Summary
     console.log('');

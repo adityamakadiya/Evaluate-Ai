@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from('ai_sessions')
-      .select('id, tool, model, started_at, ended_at, total_turns, total_input_tokens, total_output_tokens, total_cost_usd, avg_prompt_score, efficiency_score, project_dir, git_branch, developer_id, team_id', { count: 'exact' });
+      .select('id, tool, model, started_at, ended_at, last_activity_at, total_turns, total_input_tokens, total_output_tokens, total_cost_usd, avg_prompt_score, efficiency_score, project_dir, git_branch, developer_id, team_id', { count: 'exact' });
 
     if (teamId) query = query.eq('team_id', teamId);
     if (developerId) query = query.eq('developer_id', developerId);
@@ -65,15 +65,17 @@ export async function GET(request: NextRequest) {
     }
 
     const sessions = (data ?? []).map(s => {
-      // Detect stale sessions: no ended_at but started > 30 min ago
-      const startMs = s.started_at ? new Date(s.started_at).getTime() : 0;
-      const isStale = !s.ended_at && startMs > 0 && (Date.now() - startMs) > 30 * 60 * 1000;
+      // Detect stale sessions: no ended_at and no activity for > 30 min
+      const lastActiveMs = s.last_activity_at
+        ? new Date(s.last_activity_at).getTime()
+        : (s.started_at ? new Date(s.started_at).getTime() : 0);
+      const isStale = !s.ended_at && lastActiveMs > 0 && (Date.now() - lastActiveMs) > 30 * 60 * 1000;
       return {
       id: s.id,
       tool: s.tool,
       model: s.model,
       startedAt: s.started_at,
-      endedAt: s.ended_at ?? (isStale ? s.started_at : null),
+      endedAt: s.ended_at ?? (isStale ? (s.last_activity_at || s.started_at) : null),
       totalTurns: s.total_turns,
       totalInputTokens: s.total_input_tokens,
       totalOutputTokens: s.total_output_tokens,
