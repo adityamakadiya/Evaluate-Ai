@@ -44,30 +44,49 @@ export async function GET(
 
     const devId = member.id;
 
-    // AI sessions this week
-    let weekQ = supabase.from('ai_sessions')
-      .select('id, model, total_cost_usd, avg_prompt_score, total_turns, total_input_tokens, total_output_tokens, started_at')
-      .eq('developer_id', devId)
-      .gte('started_at', weekStartStr)
-      .order('started_at', { ascending: false });
-    if (teamId) weekQ = weekQ.eq('team_id', teamId);
-    const { data: weekSessions } = await weekQ;
+    // Parse session filter params
+    const sessionDays = parseInt(request.nextUrl.searchParams.get('sessionDays') ?? '7', 10);
+    const sessionLimit = Math.min(parseInt(request.nextUrl.searchParams.get('sessionLimit') ?? '20', 10), 100);
+    const sessionOffset = parseInt(request.nextUrl.searchParams.get('sessionOffset') ?? '0', 10);
 
-    // Fetch first turn prompt text for week sessions
-    const weekSessionIds = (weekSessions ?? []).map(s => s.id);
-    const weekFirstPrompts: Record<string, string> = {};
-    if (weekSessionIds.length > 0) {
-      const { data: wTurns } = await supabase
+    // Compute session filter date
+    const sessionFilterDate = sessionDays > 0
+      ? new Date(now.getTime() - sessionDays * 86400000).toISOString().slice(0, 10)
+      : null; // null = all time
+
+    // AI sessions (paginated, filtered by days)
+    let sessionsQ = supabase.from('ai_sessions')
+      .select('id, model, total_cost_usd, avg_prompt_score, total_turns, total_input_tokens, total_output_tokens, started_at', { count: 'exact' })
+      .eq('developer_id', devId)
+      .order('started_at', { ascending: false })
+      .range(sessionOffset, sessionOffset + sessionLimit - 1);
+    if (sessionFilterDate) sessionsQ = sessionsQ.gte('started_at', sessionFilterDate);
+    if (teamId) sessionsQ = sessionsQ.eq('team_id', teamId);
+    const { data: paginatedSessions, count: totalSessionCount } = await sessionsQ;
+
+    // Fetch first turn prompt text for paginated sessions
+    const paginatedSessionIds = (paginatedSessions ?? []).map(s => s.id);
+    const sessionFirstPrompts: Record<string, string> = {};
+    if (paginatedSessionIds.length > 0) {
+      const { data: turns } = await supabase
         .from('ai_turns')
         .select('session_id, prompt_text')
-        .in('session_id', weekSessionIds)
+        .in('session_id', paginatedSessionIds)
         .order('created_at', { ascending: true });
-      for (const t of wTurns ?? []) {
-        if (t.prompt_text && !weekFirstPrompts[t.session_id]) {
-          weekFirstPrompts[t.session_id] = t.prompt_text;
+      for (const t of turns ?? []) {
+        if (t.prompt_text && !sessionFirstPrompts[t.session_id]) {
+          sessionFirstPrompts[t.session_id] = t.prompt_text;
         }
       }
     }
+
+    // AI sessions this week (for stats)
+    let weekQ = supabase.from('ai_sessions')
+      .select('id, total_cost_usd, avg_prompt_score, total_turns, total_input_tokens, total_output_tokens')
+      .eq('developer_id', devId)
+      .gte('started_at', weekStartStr);
+    if (teamId) weekQ = weekQ.eq('team_id', teamId);
+    const { data: weekSessions } = await weekQ;
 
     // AI sessions last 30 days for trends
     let monthQ = supabase.from('ai_sessions')
@@ -283,20 +302,18 @@ export async function GET(
         tasksAssigned,
         sessionsThisWeek: (weekSessions ?? []).length,
       },
-      sessions: (weekSessions ?? []).map(s => {
-        const fp = weekFirstPrompts[s.id] ?? null;
-        return {
-          id: s.id,
-          model: s.model,
-          cost: s.total_cost_usd,
-          score: s.avg_prompt_score,
-          turns: s.total_turns,
-          inputTokens: s.total_input_tokens,
-          outputTokens: s.total_output_tokens,
-          startedAt: s.started_at,
-          firstPrompt: fp,
-        };
-      }),
+      sessions: (paginatedSessions ?? []).map(s => ({
+        id: s.id,
+        model: s.model,
+        cost: s.total_cost_usd,
+        score: s.avg_prompt_score,
+        turns: s.total_turns,
+        inputTokens: s.total_input_tokens,
+        outputTokens: s.total_output_tokens,
+        startedAt: s.started_at,
+        firstPrompt: sessionFirstPrompts[s.id] ?? null,
+      })),
+      sessionTotal: totalSessionCount ?? 0,
       codeChanges: (weekCode ?? []).map(c => ({
         id: c.id,
         type: c.type,

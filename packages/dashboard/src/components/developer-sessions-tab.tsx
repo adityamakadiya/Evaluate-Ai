@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Bot,
@@ -8,6 +9,8 @@ import {
   Zap,
   Hash,
   ArrowRight,
+  Loader2,
+  ChevronDown,
 } from 'lucide-react';
 
 interface Session {
@@ -22,8 +25,19 @@ interface Session {
   firstPrompt: string | null;
 }
 
+const DAY_FILTERS = [
+  { label: '7 days', value: 7 },
+  { label: '14 days', value: 14 },
+  { label: '30 days', value: 30 },
+  { label: 'All time', value: 0 },
+] as const;
+
+const PAGE_SIZE = 20;
+
 interface DeveloperSessionsTabProps {
-  sessions: Session[];
+  developerId: string;
+  initialSessions: Session[];
+  initialTotal: number;
   stats: {
     totalAiCost: number;
     avgPromptScore: number | null;
@@ -71,7 +85,49 @@ function groupByDate(sessions: Session[]): Record<string, Session[]> {
   return groups;
 }
 
-export default function DeveloperSessionsTab({ sessions, stats }: DeveloperSessionsTabProps) {
+export default function DeveloperSessionsTab({ developerId, initialSessions, initialTotal, stats }: DeveloperSessionsTabProps) {
+  const [sessions, setSessions] = useState<Session[]>(initialSessions);
+  const [totalCount, setTotalCount] = useState(initialTotal);
+  const [selectedDays, setSelectedDays] = useState(7);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const hasMore = sessions.length < totalCount;
+
+  const fetchSessions = useCallback(async (days: number, offset: number, append: boolean) => {
+    if (append) setLoadingMore(true); else setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        sessionDays: String(days),
+        sessionLimit: String(PAGE_SIZE),
+        sessionOffset: String(offset),
+      });
+      const res = await fetch(`/api/dashboard/developers/${developerId}?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (append) {
+        setSessions(prev => [...prev, ...json.sessions]);
+      } else {
+        setSessions(json.sessions);
+      }
+      setTotalCount(json.sessionTotal);
+    } catch (err) {
+      console.error('Failed to fetch sessions:', err);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [developerId]);
+
+  const handleFilterChange = (days: number) => {
+    setSelectedDays(days);
+    fetchSessions(days, 0, false);
+  };
+
+  const handleLoadMore = () => {
+    fetchSessions(selectedDays, sessions.length, true);
+  };
+
   const grouped = groupByDate(sessions);
   const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
 
@@ -111,16 +167,52 @@ export default function DeveloperSessionsTab({ sessions, stats }: DeveloperSessi
         </div>
       </div>
 
+      {/* Filter bar */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1 bg-bg-card border border-border-primary rounded-lg p-1">
+          {DAY_FILTERS.map(f => (
+            <button
+              key={f.value}
+              onClick={() => handleFilterChange(f.value)}
+              disabled={loading}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                selectedDays === f.value
+                  ? 'bg-purple-600 text-white'
+                  : 'text-text-muted hover:text-text-primary hover:bg-bg-elevated'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-text-muted">
+          {totalCount} session{totalCount !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      {/* Loading state */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-5 w-5 text-text-muted animate-spin" />
+        </div>
+      )}
+
       {/* Sessions grouped by date */}
-      {sessions.length === 0 ? (
+      {!loading && sessions.length === 0 && (
         <div className="bg-bg-card border border-border-primary rounded-lg p-5">
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <Bot className="w-10 h-10 text-text-muted mb-3" />
-            <p className="text-sm text-text-secondary">No AI sessions this week</p>
-            <p className="text-xs text-text-muted mt-1">Sessions will appear here once the developer uses AI coding tools</p>
+            <p className="text-sm text-text-secondary">No AI sessions found</p>
+            <p className="text-xs text-text-muted mt-1">
+              {selectedDays > 0
+                ? `No sessions in the last ${selectedDays} days`
+                : 'Sessions will appear here once the developer uses AI coding tools'}
+            </p>
           </div>
         </div>
-      ) : (
+      )}
+
+      {!loading && sessions.length > 0 && (
         <div className="space-y-4">
           {sortedDates.map(dateKey => {
             const daySessions = grouped[dateKey];
@@ -199,6 +291,24 @@ export default function DeveloperSessionsTab({ sessions, stats }: DeveloperSessi
               </div>
             );
           })}
+
+          {/* Load more button */}
+          {hasMore && (
+            <div className="flex justify-center pt-2">
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-text-secondary bg-bg-card border border-border-primary rounded-lg hover:bg-bg-elevated hover:border-border-hover transition-colors disabled:opacity-50"
+              >
+                {loadingMore ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+                Load more ({totalCount - sessions.length} remaining)
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -54,6 +54,7 @@ interface DeveloperData {
     startedAt: string;
     firstPrompt: string | null;
   }[];
+  sessionTotal: number;
   codeChanges: {
     id: string;
     type: string;
@@ -248,7 +249,9 @@ export default function DeveloperDetailPage() {
           <div className="animate-section">
             {activeTab === 'sessions' && (
               <DeveloperSessionsTab
-                sessions={data.sessions}
+                developerId={id}
+                initialSessions={data.sessions}
+                initialTotal={data.sessionTotal}
                 stats={{
                   totalAiCost: data.stats.totalAiCost,
                   avgPromptScore: data.stats.avgPromptScore,
