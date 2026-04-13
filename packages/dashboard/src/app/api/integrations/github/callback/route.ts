@@ -1,13 +1,28 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { listInstallationRepos } from '@/lib/github-app';
 
+/**
+ * GET /api/integrations/github/callback
+ *
+ * GitHub redirects here after the user installs the GitHub App.
+ * Receives: installation_id, setup_action, state (our team_id)
+ */
 export async function GET(request: NextRequest) {
   try {
-    const code = request.nextUrl.searchParams.get('code');
+    const installationId = request.nextUrl.searchParams.get('installation_id');
+    const setupAction = request.nextUrl.searchParams.get('setup_action');
     const state = request.nextUrl.searchParams.get('state');
 
-    if (!code || !state) {
+    // Handle app installation being removed
+    if (setupAction === 'delete') {
+      return NextResponse.redirect(
+        new URL('/dashboard/integrations?info=github_removed', request.nextUrl.origin)
+      );
+    }
+
+    if (!installationId || !state) {
       return NextResponse.redirect(
         new URL('/dashboard/integrations?error=missing_params', request.nextUrl.origin)
       );
@@ -24,70 +39,48 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Exchange code for access token
-    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        client_id: process.env.GITHUB_CLIENT_ID,
-        client_secret: process.env.GITHUB_CLIENT_SECRET,
-        code,
-      }),
-    });
+    const installId = parseInt(installationId, 10);
 
-    const tokenData = await tokenResponse.json();
-
-    if (tokenData.error) {
-      console.error('GitHub OAuth error:', tokenData.error_description);
-      return NextResponse.redirect(
-        new URL('/dashboard/integrations?error=oauth_failed', request.nextUrl.origin)
-      );
+    // Fetch installed repos using the App installation token
+    let repoList: Array<Record<string, unknown>> = [];
+    try {
+      const repos = await listInstallationRepos(installId);
+      repoList = repos.map((r) => ({
+        name: r.name,
+        full_name: r.full_name,
+        default_branch: r.default_branch,
+        language: r.language,
+        private: r.private,
+      }));
+    } catch (err) {
+      console.error('Failed to fetch repos after install:', err);
+      // Continue — we'll fetch repos later
     }
-
-    const accessToken = tokenData.access_token;
-
-    // Fetch user's repos
-    const reposResponse = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/vnd.github.v3+json',
-      },
-    });
-
-    const repos = await reposResponse.json();
-    const repoList = Array.isArray(repos)
-      ? repos.map((r: Record<string, unknown>) => ({
-          name: r.name,
-          full_name: r.full_name,
-          default_branch: r.default_branch,
-          language: r.language,
-          private: r.private,
-        }))
-      : [];
 
     // Store integration in Supabase
     const supabase = getSupabaseAdmin();
 
-    // Upsert: if integration already exists for this team+provider, update it
+    const integrationData = {
+      team_id: teamId,
+      provider: 'github',
+      access_token: '', // GitHub App uses installation tokens, not stored user tokens
+      config: {
+        installation_id: installId,
+        repos: repoList,
+        connected_at: new Date().toISOString(),
+        setup_action: setupAction ?? 'install',
+      },
+      status: 'active',
+      last_sync_at: new Date().toISOString(),
+    };
+
+    // Upsert: update if already exists for this team
     const { error: upsertError } = await supabase
       .from('integrations')
-      .upsert(
-        {
-          team_id: teamId,
-          provider: 'github',
-          access_token: accessToken,
-          config: { repos: repoList, connected_at: new Date().toISOString() },
-          status: 'active',
-          last_sync_at: new Date().toISOString(),
-        },
-        { onConflict: 'team_id,provider' }
-      );
+      .upsert(integrationData, { onConflict: 'team_id,provider' });
 
     if (upsertError) {
-      // If upsert fails due to no unique constraint, try insert/update manually
+      // Fallback: manual insert/update
       const { data: existing } = await supabase
         .from('integrations')
         .select('id')
@@ -99,21 +92,14 @@ export async function GET(request: NextRequest) {
         await supabase
           .from('integrations')
           .update({
-            access_token: accessToken,
-            config: { repos: repoList, connected_at: new Date().toISOString() },
+            access_token: '',
+            config: integrationData.config,
             status: 'active',
             last_sync_at: new Date().toISOString(),
           })
           .eq('id', existing.id);
       } else {
-        await supabase.from('integrations').insert({
-          team_id: teamId,
-          provider: 'github',
-          access_token: accessToken,
-          config: { repos: repoList, connected_at: new Date().toISOString() },
-          status: 'active',
-          last_sync_at: new Date().toISOString(),
-        });
+        await supabase.from('integrations').insert(integrationData);
       }
     }
 

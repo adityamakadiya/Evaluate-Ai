@@ -219,7 +219,7 @@ export default function RootLayout({
         <title>EvaluateAI</title>
         <meta name="description" content="AI coding assistant evaluation dashboard" />
       </head>
-      <body className="min-h-full flex bg-[var(--bg-primary)] text-[var(--text-primary)]">
+      <body suppressHydrationWarning className="min-h-full flex bg-[var(--bg-primary)] text-[var(--text-primary)]">
         <AuthProvider>
           <AppShell>{children}</AppShell>
         </AuthProvider>

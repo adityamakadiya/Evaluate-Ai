@@ -14,6 +14,9 @@ export async function middleware(request: NextRequest) {
     PUBLIC_ROUTES.some(route => pathname.startsWith(route)) ||
     pathname.startsWith('/api/cli/') ||
     pathname.startsWith('/api/integrations/github/webhook') ||
+    pathname.startsWith('/api/integrations/github/callback') ||
+    pathname.startsWith('/api/integrations/fireflies/webhook') ||
+    pathname.startsWith('/api/integrations/fireflies/callback') ||
     (pathname.startsWith('/api/') && hasBearerToken);
 
   const response = NextResponse.next({
