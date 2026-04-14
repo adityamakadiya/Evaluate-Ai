@@ -127,7 +127,7 @@ function formatMs(ms: number): string {
 
 function formatDuration(start: string, end: string | null): string {
   if (!end) return '--';
-  const ms = new Date(end).getTime() - new Date(start).getTime();
+  const ms = Math.max(0, new Date(end).getTime() - new Date(start).getTime());
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
   return `${(ms / 3_600_000).toFixed(1)}h`;
