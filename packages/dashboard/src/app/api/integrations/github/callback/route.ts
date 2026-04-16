@@ -1,28 +1,28 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
-import { listInstallationRepos } from '@/lib/github-app';
+import { exchangeCodeForTokens, fetchAuthenticatedUser } from '@/lib/github-oauth';
 
 /**
  * GET /api/integrations/github/callback
  *
- * GitHub redirects here after the user installs the GitHub App.
- * Receives: installation_id, setup_action, state (our team_id)
+ * GitHub redirects here after the user authorizes the OAuth App.
+ * Exchanges the code for tokens, stores in DB, redirects to integrations page.
  */
 export async function GET(request: NextRequest) {
   try {
-    const installationId = request.nextUrl.searchParams.get('installation_id');
-    const setupAction = request.nextUrl.searchParams.get('setup_action');
+    const code = request.nextUrl.searchParams.get('code');
     const state = request.nextUrl.searchParams.get('state');
+    const error = request.nextUrl.searchParams.get('error');
 
-    // Handle app installation being removed
-    if (setupAction === 'delete') {
+    // User denied access
+    if (error) {
       return NextResponse.redirect(
-        new URL('/dashboard/integrations?info=github_removed', request.nextUrl.origin)
+        new URL('/dashboard/integrations?error=oauth_denied', request.nextUrl.origin)
       );
     }
 
-    if (!installationId || !state) {
+    if (!code || !state) {
       return NextResponse.redirect(
         new URL('/dashboard/integrations?error=missing_params', request.nextUrl.origin)
       );
@@ -39,23 +39,26 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const installId = parseInt(installationId, 10);
+    // Exchange code for tokens
+    const tokens = await exchangeCodeForTokens(code);
 
-    // Fetch installed repos using the App installation token
-    let repoList: Array<Record<string, unknown>> = [];
+    // Fetch the authenticated user's profile
+    let githubUser: { login: string } | null = null;
     try {
-      const repos = await listInstallationRepos(installId);
-      repoList = repos.map((r) => ({
-        name: r.name,
-        full_name: r.full_name,
-        default_branch: r.default_branch,
-        language: r.language,
-        private: r.private,
-      }));
+      githubUser = await fetchAuthenticatedUser(tokens.accessToken);
     } catch (err) {
-      console.error('Failed to fetch repos after install:', err);
-      // Continue — we'll fetch repos later
+      console.error('Failed to fetch GitHub user:', err);
     }
+
+    // Build config
+    const config: Record<string, unknown> = {
+      oauth_user: githubUser?.login ?? null,
+      connected_at: new Date().toISOString(),
+      tracked_repos: [],
+      token_expires_at: tokens.expiresIn
+        ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
+        : null,
+    };
 
     // Store integration in Supabase
     const supabase = getSupabaseAdmin();
@@ -63,13 +66,9 @@ export async function GET(request: NextRequest) {
     const integrationData = {
       team_id: teamId,
       provider: 'github',
-      access_token: '', // GitHub App uses installation tokens, not stored user tokens
-      config: {
-        installation_id: installId,
-        repos: repoList,
-        connected_at: new Date().toISOString(),
-        setup_action: setupAction ?? 'install',
-      },
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken ?? '',
+      config,
       status: 'active',
       last_sync_at: new Date().toISOString(),
     };
@@ -92,8 +91,9 @@ export async function GET(request: NextRequest) {
         await supabase
           .from('integrations')
           .update({
-            access_token: '',
-            config: integrationData.config,
+            access_token: tokens.accessToken,
+            refresh_token: tokens.refreshToken ?? '',
+            config,
             status: 'active',
             last_sync_at: new Date().toISOString(),
           })
@@ -103,6 +103,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Redirect to integrations page with success — user will pick repos next
     return NextResponse.redirect(
       new URL('/dashboard/integrations?success=github_connected', request.nextUrl.origin)
     );

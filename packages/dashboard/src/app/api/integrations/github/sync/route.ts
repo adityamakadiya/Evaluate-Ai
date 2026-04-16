@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import {
-  getTeamInstallationId,
-  listInstallationRepos,
+  getValidToken,
+  getTrackedRepos,
   fetchRecentCommits,
   fetchRecentPRs,
-} from '@/lib/github-app';
+} from '@/lib/github-oauth';
 import { matchCodeChangeToTasks } from '@/lib/services/task-matcher';
 
 // ---------- Types ----------
@@ -55,6 +55,17 @@ async function mapGitHubUser(
 
 // ---------- Main Handler ----------
 
+/**
+ * POST /api/integrations/github/sync
+ *
+ * Syncs commits and PRs for all tracked repos using the OAuth token.
+ * Body: { team_id: string }
+ *
+ * NOTE: Currently triggered manually via "Sync Now" button.
+ * TODO: Enable cron-based auto-sync (every 15 min) when ready.
+ * The cron endpoint at /api/cron/daily can be extended to call this,
+ * or a dedicated /api/cron/github-sync endpoint can be created.
+ */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -66,13 +77,13 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabaseAdmin();
 
-    // Get installation ID
-    const installationId = await getTeamInstallationId(teamId);
-    if (!installationId) {
-      return NextResponse.json(
-        { error: 'GitHub is not connected. Please install the GitHub App first.' },
-        { status: 404 }
-      );
+    // Get OAuth token
+    let token: string;
+    try {
+      token = await getValidToken(teamId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      return NextResponse.json({ error: msg }, { status: 404 });
     }
 
     // Get last sync time
@@ -88,13 +99,20 @@ export async function POST(request: NextRequest) {
       ? new Date(integration.last_sync_at).toISOString()
       : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(); // Default: last 7 days
 
-    // Get installed repos
-    let repos: Array<{ full_name: string }>;
-    try {
-      repos = await listInstallationRepos(installationId);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      return NextResponse.json({ error: `Failed to fetch repos: ${msg}` }, { status: 502 });
+    // Get tracked repos
+    const trackedRepos = await getTrackedRepos(teamId);
+    if (trackedRepos.length === 0) {
+      return NextResponse.json({
+        success: true,
+        reposSynced: 0,
+        commitsProcessed: 0,
+        commitsSkipped: 0,
+        prsProcessed: 0,
+        prsSkipped: 0,
+        errors: [],
+        message: 'No repos tracked. Select repos to track from the integrations page.',
+        syncedAt: new Date().toISOString(),
+      });
     }
 
     const result: SyncResult = {
@@ -106,11 +124,11 @@ export async function POST(request: NextRequest) {
       errors: [],
     };
 
-    // Process each repo
-    for (const repo of repos) {
+    // Process each tracked repo
+    for (const repoFullName of trackedRepos) {
       try {
         // Sync commits
-        const commits = await fetchRecentCommits(installationId, repo.full_name, since);
+        const commits = await fetchRecentCommits(token, repoFullName, since);
         for (const commit of commits) {
           const sha = commit.sha as string;
 
@@ -143,7 +161,7 @@ export async function POST(request: NextRequest) {
               developer_id: developerId,
               type: 'commit',
               external_id: sha,
-              repo: repo.full_name,
+              repo: repoFullName,
               title: message?.split('\n')[0] ?? sha.slice(0, 8),
               body: message,
               files_changed: 0,
@@ -159,8 +177,8 @@ export async function POST(request: NextRequest) {
             developer_id: developerId,
             event_type: 'commit',
             title: `Committed: ${message?.split('\n')[0] ?? sha.slice(0, 8)}`,
-            description: `${repo.full_name}`,
-            metadata: { sha, repo: repo.full_name },
+            description: `${repoFullName}`,
+            metadata: { sha, repo: repoFullName },
             source_id: codeChange?.id ?? sha,
             source_table: 'code_changes',
             occurred_at: timestamp ?? new Date().toISOString(),
@@ -177,7 +195,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Sync PRs
-        const prs = await fetchRecentPRs(installationId, repo.full_name, since);
+        const prs = await fetchRecentPRs(token, repoFullName, since);
         for (const pr of prs) {
           const prNumber = pr.number as number;
           const prState = pr.state as string;
@@ -214,7 +232,7 @@ export async function POST(request: NextRequest) {
               developer_id: developerId,
               type,
               external_id: externalId,
-              repo: repo.full_name,
+              repo: repoFullName,
               branch: (pr.head as Record<string, unknown>)?.ref as string | null,
               title: prTitle,
               body: pr.body as string | null,
@@ -237,8 +255,8 @@ export async function POST(request: NextRequest) {
             developer_id: developerId,
             event_type: type,
             title: `${eventLabels[type]}: #${prNumber} ${prTitle}`,
-            description: repo.full_name,
-            metadata: { pr_number: prNumber, repo: repo.full_name },
+            description: repoFullName,
+            metadata: { pr_number: prNumber, repo: repoFullName },
             source_id: codeChange?.id ?? externalId,
             source_table: 'code_changes',
             occurred_at: timestamp ?? new Date().toISOString(),
@@ -257,7 +275,7 @@ export async function POST(request: NextRequest) {
         result.reposSynced++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
-        result.errors.push(`${repo.full_name}: ${msg}`);
+        result.errors.push(`${repoFullName}: ${msg}`);
       }
     }
 

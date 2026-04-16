@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
-import { listInstallationRepos } from '@/lib/github-app';
+import { getValidToken, discoverAllRepos } from '@/lib/github-oauth';
 
+/**
+ * GET /api/integrations/github/repos?team_id=xxx
+ *
+ * Returns the tracked repositories for a team.
+ * If live=true, fetches fresh data from GitHub to update cached repo metadata.
+ */
 export async function GET(request: NextRequest) {
   try {
     const teamId = request.nextUrl.searchParams.get('team_id');
@@ -14,7 +20,7 @@ export async function GET(request: NextRequest) {
 
     const { data: integration } = await supabase
       .from('integrations')
-      .select('config')
+      .select('id, access_token, config')
       .eq('team_id', teamId)
       .eq('provider', 'github')
       .eq('status', 'active')
@@ -24,14 +30,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'GitHub not connected', repos: [] }, { status: 404 });
     }
 
-    const config = integration.config as Record<string, unknown> | null;
-    const installationId = config?.installation_id as number | undefined;
+    const config = (integration.config as Record<string, unknown>) ?? {};
+    const trackedRepos = (config.tracked_repos as string[]) ?? [];
 
-    // If we have an installation ID, fetch live repos from GitHub App
-    if (installationId) {
-      try {
-        const repos = await listInstallationRepos(installationId);
-        const repoList = repos.map((r) => ({
+    if (trackedRepos.length === 0) {
+      return NextResponse.json({ repos: [], tracked: true, oauthUser: config.oauth_user ?? null });
+    }
+
+    // Fetch live repo data from GitHub to get up-to-date metadata
+    const trackedSet = new Set(trackedRepos);
+    try {
+      const token = await getValidToken(teamId);
+      const allRepos = await discoverAllRepos(token);
+
+      const repoList = allRepos
+        .filter((r) => trackedSet.has(r.full_name))
+        .map((r) => ({
           name: r.name,
           fullName: r.full_name,
           defaultBranch: r.default_branch,
@@ -40,34 +54,22 @@ export async function GET(request: NextRequest) {
           updatedAt: r.updated_at,
         }));
 
-        // Update cached repos in config
-        await supabase
-          .from('integrations')
-          .update({
-            config: { ...config, repos: repoList },
-          })
-          .eq('team_id', teamId)
-          .eq('provider', 'github');
+      return NextResponse.json({ repos: repoList, cached: false, oauthUser: config.oauth_user ?? null });
+    } catch (err) {
+      console.error('Failed to fetch live repos:', err);
 
-        return NextResponse.json({ repos: repoList, cached: false });
-      } catch (err) {
-        console.error('Failed to fetch live repos:', err);
-        // Fall through to cached repos
-      }
+      // Fallback: return tracked repo names without metadata
+      const fallbackRepos = trackedRepos.map((fullName) => ({
+        name: fullName.split('/').pop() ?? fullName,
+        fullName,
+        defaultBranch: 'main',
+        language: null,
+        private: false,
+        updatedAt: null,
+      }));
+
+      return NextResponse.json({ repos: fallbackRepos, cached: true, oauthUser: config.oauth_user ?? null });
     }
-
-    // Fallback: return cached repos from config
-    const cachedRepos = (config?.repos as Array<Record<string, unknown>>) ?? [];
-    const repos = cachedRepos.map((r) => ({
-      name: r.name,
-      fullName: r.full_name ?? r.fullName,
-      defaultBranch: r.default_branch ?? r.defaultBranch,
-      language: r.language,
-      private: r.private,
-      updatedAt: r.updated_at ?? r.updatedAt,
-    }));
-
-    return NextResponse.json({ repos, cached: true });
   } catch (err) {
     console.error('GitHub repos error:', err);
     return NextResponse.json({ error: 'Failed to fetch repos', repos: [] }, { status: 500 });

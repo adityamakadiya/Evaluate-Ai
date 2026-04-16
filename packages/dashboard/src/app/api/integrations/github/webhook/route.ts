@@ -2,13 +2,29 @@ import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
-import { findTeamByInstallation } from '@/lib/github-app';
 import { matchCodeChangeToTasks } from '@/lib/services/task-matcher';
+
+/**
+ * POST /api/integrations/github/webhook
+ *
+ * Handles incoming GitHub webhook events (push, pull_request, pull_request_review).
+ *
+ * OPTIONAL: This endpoint is NOT required for the OAuth-based sync flow.
+ * Currently, syncing is done via manual "Sync Now" or (future) cron polling.
+ *
+ * This webhook is kept for future use if:
+ * - A GitHub App is re-enabled for real-time event delivery
+ * - Organization webhooks are configured to point here
+ * - Repository-level webhooks are set up via the GitHub API
+ *
+ * To enable: set GITHUB_WEBHOOK_SECRET in env and configure the webhook URL
+ * in GitHub (org or repo settings) pointing to this endpoint.
+ */
 
 // ---------- Signature Verification ----------
 
 function verifySignature(payload: string, signature: string | null): boolean {
-  const secret = process.env.GITHUB_APP_WEBHOOK_SECRET;
+  const secret = process.env.GITHUB_WEBHOOK_SECRET;
   if (!secret || !signature) return false;
 
   const expected = 'sha256=' + createHmac('sha256', secret).update(payload).digest('hex');
@@ -81,6 +97,31 @@ async function insertTimelineEvent(
   });
 }
 
+// ---------- Helper: Find team by repo ----------
+
+async function findTeamByRepo(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  repoFullName: string
+): Promise<string | null> {
+  const { data: integrations } = await supabase
+    .from('integrations')
+    .select('team_id, config')
+    .eq('provider', 'github')
+    .eq('status', 'active');
+
+  if (!integrations) return null;
+
+  for (const integration of integrations) {
+    const config = integration.config as Record<string, unknown> | null;
+    const trackedRepos = config?.tracked_repos as string[] | undefined;
+    if (trackedRepos?.includes(repoFullName)) {
+      return integration.team_id;
+    }
+  }
+
+  return null;
+}
+
 // ---------- Event Handlers ----------
 
 async function handlePush(
@@ -146,7 +187,6 @@ async function handlePush(
       occurredAt: timestamp ?? new Date().toISOString(),
     });
 
-    // Match commit to open tasks (fire-and-forget)
     if (codeChange?.id) {
       matchCodeChangeToTasks(codeChange.id, teamId, developerId).catch((err) =>
         console.error('Task matching failed for commit:', err)
@@ -184,7 +224,6 @@ async function handlePullRequest(
   const branch = (pr.head as Record<string, unknown>)?.ref as string | null;
   const timestamp = (pr.merged_at ?? pr.updated_at ?? pr.created_at) as string;
 
-  // Idempotency
   const externalId = `pr-${prNumber}-${action}`;
   const { data: existing } = await supabase
     .from('code_changes')
@@ -230,7 +269,6 @@ async function handlePullRequest(
     occurredAt: timestamp ?? new Date().toISOString(),
   });
 
-  // Match PR to open tasks (fire-and-forget)
   if (codeChange?.id) {
     matchCodeChangeToTasks(codeChange.id, teamId, developerId).catch((err) =>
       console.error('Task matching failed for PR:', err)
@@ -261,7 +299,6 @@ async function handlePullRequestReview(
   const prTitle = pr.title as string;
   const submittedAt = review.submitted_at as string;
 
-  // Idempotency
   const externalId = `review-${review.id}`;
   const { data: existing } = await supabase
     .from('code_changes')
@@ -323,35 +360,13 @@ export async function POST(request: NextRequest) {
     const payload = JSON.parse(rawBody);
     const supabase = getSupabaseAdmin();
 
-    // GitHub App webhooks include installation.id
-    const installationId = (payload.installation as Record<string, unknown>)?.id as number | undefined;
+    // Find team by repo (matches against tracked_repos in integration config)
+    const repoFullName =
+      (payload.repository as Record<string, unknown>)?.full_name as string | undefined;
 
-    // Find team by installation ID (GitHub App flow)
     let teamId: string | null = null;
-    if (installationId) {
-      teamId = await findTeamByInstallation(installationId);
-    }
-
-    // Fallback: find team by repo (for legacy OAuth webhooks)
-    if (!teamId) {
-      const repoFullName =
-        (payload.repository as Record<string, unknown>)?.full_name as string | undefined;
-      if (repoFullName) {
-        const { data: integrations } = await supabase
-          .from('integrations')
-          .select('team_id, config')
-          .eq('provider', 'github')
-          .eq('status', 'active');
-
-        for (const integration of integrations ?? []) {
-          const config = integration.config as Record<string, unknown> | null;
-          const repos = config?.repos as Array<Record<string, unknown>> | undefined;
-          if (repos?.some((r) => r.full_name === repoFullName || r.fullName === repoFullName)) {
-            teamId = integration.team_id;
-            break;
-          }
-        }
-      }
+    if (repoFullName) {
+      teamId = await findTeamByRepo(supabase, repoFullName);
     }
 
     if (!teamId) {
@@ -368,11 +383,6 @@ export async function POST(request: NextRequest) {
       case 'pull_request_review':
         await handlePullRequestReview(supabase, teamId, payload);
         break;
-      case 'installation':
-      case 'installation_repositories':
-        // GitHub sends these when app is installed/uninstalled/repos changed
-        // The callback handler already handles the initial install
-        return NextResponse.json({ message: `Acknowledged ${event}` });
       case 'ping':
         return NextResponse.json({ message: 'pong' });
       default:

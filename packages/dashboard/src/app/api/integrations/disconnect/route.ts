@@ -44,12 +44,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Mark as revoked (soft delete — preserves history)
+    // Mark as revoked (soft delete — preserves history, clears tokens)
     await supabase
       .from('integrations')
       .update({
         status: 'revoked',
         access_token: '',
+        refresh_token: '',
         config: { disconnected_at: new Date().toISOString() },
       })
       .eq('id', integration.id);

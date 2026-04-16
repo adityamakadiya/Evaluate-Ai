@@ -17,6 +17,12 @@ import {
   X,
   RefreshCw,
   Unplug,
+  Search,
+  GitBranch,
+  Lock,
+  Building2,
+  User,
+  Users,
 } from 'lucide-react';
 
 // ---------- Types ----------
@@ -42,8 +48,26 @@ interface Integration {
     }>;
     connected_at?: string;
     tracked_repos?: string[];
+    oauth_user?: string;
   };
   lastSyncAt: string | null;
+}
+
+interface DiscoverRepo {
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+  language: string | null;
+  private: boolean;
+  updatedAt: string;
+  ownerLogin: string;
+  ownerType: string;
+  tracked: boolean;
+}
+
+interface RepoGroup {
+  label: string;
+  repos: DiscoverRepo[];
 }
 
 // ---------- Constants ----------
@@ -79,6 +103,23 @@ const integrationCards = [
   },
 ];
 
+// ---------- Language Colors ----------
+
+const languageColors: Record<string, string> = {
+  TypeScript: 'bg-blue-400',
+  JavaScript: 'bg-yellow-400',
+  Python: 'bg-green-400',
+  Rust: 'bg-orange-400',
+  Go: 'bg-cyan-400',
+  Java: 'bg-red-400',
+  Ruby: 'bg-red-500',
+  PHP: 'bg-purple-400',
+  'C#': 'bg-green-500',
+  'C++': 'bg-pink-400',
+  Swift: 'bg-orange-500',
+  Kotlin: 'bg-purple-500',
+};
+
 // ---------- Component ----------
 
 export default function IntegrationsPageWrapper() {
@@ -109,6 +150,15 @@ function IntegrationsPage() {
   const [githubLastSyncAt, setGithubLastSyncAt] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+  const [oauthUser, setOauthUser] = useState<string | null>(null);
+
+  // Repo picker state
+  const [showRepoPicker, setShowRepoPicker] = useState(false);
+  const [repoGroups, setRepoGroups] = useState<RepoGroup[]>([]);
+  const [selectedRepos, setSelectedRepos] = useState<Set<string>>(new Set());
+  const [repoPickerLoading, setRepoPickerLoading] = useState(false);
+  const [repoPickerSaving, setRepoPickerSaving] = useState(false);
+  const [repoSearchQuery, setRepoSearchQuery] = useState('');
 
   // Check URL params for success/error messages
   useEffect(() => {
@@ -116,14 +166,14 @@ function IntegrationsPage() {
     const error = searchParams.get('error');
 
     if (success === 'github_connected') {
-      setSuccessMsg('GitHub connected successfully!');
-      setTimeout(() => setSuccessMsg(null), 5000);
+      setSuccessMsg('GitHub connected successfully! Select repositories to track.');
+      setTimeout(() => setSuccessMsg(null), 7000);
     }
     if (error) {
       const errorMessages: Record<string, string> = {
         missing_params: 'GitHub authorization failed: missing parameters',
         invalid_state: 'GitHub authorization failed: invalid state',
-        oauth_failed: 'GitHub OAuth failed. Please try again.',
+        oauth_denied: 'GitHub authorization was denied. Please try again.',
         callback_failed: 'GitHub connection failed. Please try again.',
       };
       setErrorMsg(errorMessages[error] ?? 'An error occurred');
@@ -140,11 +190,11 @@ function IntegrationsPage() {
 
     async function fetchIntegrations() {
       try {
-        // Fetch GitHub integration repos
         const ghReposRes = await fetch(`/api/integrations/github/repos?team_id=${teamId}`);
         if (ghReposRes.ok) {
           const data = await ghReposRes.json();
           setRepos(data.repos ?? []);
+          setOauthUser(data.oauthUser ?? null);
           setGithubIntegration({
             id: 'github',
             provider: 'github',
@@ -152,9 +202,13 @@ function IntegrationsPage() {
             config: {},
             lastSyncAt: null,
           });
+
+          // Auto-open repo picker if connected but no repos tracked yet
+          if ((data.repos ?? []).length === 0) {
+            handleOpenRepoPicker();
+          }
         }
 
-        // Fetch Fireflies integration status
         const ffRes = await fetch(`/api/integrations/fireflies/status?team_id=${teamId}`);
         if (ffRes.ok) {
           const data = await ffRes.json();
@@ -163,9 +217,7 @@ function IntegrationsPage() {
               id: 'fireflies',
               provider: 'fireflies',
               status: 'active',
-              config: {
-                connected_at: data.connectedAt,
-              },
+              config: { connected_at: data.connectedAt },
               lastSyncAt: data.lastSyncAt,
             });
             setLastSyncAt(data.lastSyncAt ?? null);
@@ -179,10 +231,117 @@ function IntegrationsPage() {
     }
 
     fetchIntegrations();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId]);
 
   function handleConnectGitHub() {
     window.location.href = `/api/integrations/github/connect?team_id=${teamId}`;
+  }
+
+  async function handleOpenRepoPicker() {
+    setShowRepoPicker(true);
+    setRepoPickerLoading(true);
+    setRepoSearchQuery('');
+
+    try {
+      const res = await fetch(`/api/integrations/github/discover?team_id=${teamId}`);
+      if (!res.ok) {
+        const data = await res.json();
+        setErrorMsg(data.error ?? 'Failed to load repositories');
+        setShowRepoPicker(false);
+        return;
+      }
+
+      const data = await res.json();
+      setRepoGroups(data.groups ?? []);
+
+      // Pre-select already tracked repos
+      const tracked = new Set<string>();
+      for (const group of (data.groups as RepoGroup[]) ?? []) {
+        for (const repo of group.repos) {
+          if (repo.tracked) tracked.add(repo.fullName);
+        }
+      }
+      setSelectedRepos(tracked);
+    } catch {
+      setErrorMsg('Failed to load repositories from GitHub');
+      setShowRepoPicker(false);
+    } finally {
+      setRepoPickerLoading(false);
+    }
+  }
+
+  function toggleRepo(fullName: string) {
+    setSelectedRepos((prev) => {
+      const next = new Set(prev);
+      if (next.has(fullName)) {
+        next.delete(fullName);
+      } else {
+        next.add(fullName);
+      }
+      return next;
+    });
+  }
+
+  function toggleGroup(group: RepoGroup) {
+    const filtered = getFilteredRepos(group.repos);
+    const allSelected = filtered.every((r) => selectedRepos.has(r.fullName));
+
+    setSelectedRepos((prev) => {
+      const next = new Set(prev);
+      for (const repo of filtered) {
+        if (allSelected) {
+          next.delete(repo.fullName);
+        } else {
+          next.add(repo.fullName);
+        }
+      }
+      return next;
+    });
+  }
+
+  function getFilteredRepos(groupRepos: DiscoverRepo[]): DiscoverRepo[] {
+    if (!repoSearchQuery.trim()) return groupRepos;
+    const q = repoSearchQuery.toLowerCase();
+    return groupRepos.filter(
+      (r) =>
+        r.fullName.toLowerCase().includes(q) ||
+        r.name.toLowerCase().includes(q) ||
+        (r.language ?? '').toLowerCase().includes(q)
+    );
+  }
+
+  async function handleSaveTrackedRepos() {
+    setRepoPickerSaving(true);
+    try {
+      const res = await fetch('/api/integrations/github/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ team_id: teamId, repos: [...selectedRepos] }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErrorMsg(data.error ?? 'Failed to save repo selection');
+        return;
+      }
+
+      setShowRepoPicker(false);
+      setSuccessMsg(`Now tracking ${data.trackedCount} repositor${data.trackedCount === 1 ? 'y' : 'ies'}.`);
+      setTimeout(() => setSuccessMsg(null), 5000);
+
+      // Refresh the repo list
+      const ghReposRes = await fetch(`/api/integrations/github/repos?team_id=${teamId}`);
+      if (ghReposRes.ok) {
+        const repoData = await ghReposRes.json();
+        setRepos(repoData.repos ?? []);
+      }
+    } catch {
+      setErrorMsg('Failed to save repo selection. Please try again.');
+    } finally {
+      setRepoPickerSaving(false);
+    }
   }
 
   async function handleDisconnect(provider: string) {
@@ -206,6 +365,7 @@ function IntegrationsPage() {
       if (provider === 'github') {
         setGithubIntegration(null);
         setRepos([]);
+        setOauthUser(null);
       } else if (provider === 'fireflies') {
         setFirefliesIntegration(null);
         setLastSyncAt(null);
@@ -345,6 +505,12 @@ function IntegrationsPage() {
   const isGitHubConnected = githubIntegration !== null;
   const isFirefliesConnected = firefliesIntegration !== null;
 
+  // Count total filtered repos across all groups
+  const totalFilteredRepos = repoGroups.reduce(
+    (sum, g) => sum + getFilteredRepos(g.repos).length,
+    0
+  );
+
   // ---------- Render ----------
 
   return (
@@ -478,6 +644,166 @@ function IntegrationsPage() {
         </div>
       )}
 
+      {/* Repository Picker Modal */}
+      {showRepoPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-bg-card border border-border-primary rounded-lg w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-border-primary shrink-0">
+              <div>
+                <h3 className="text-sm font-semibold text-text-primary">
+                  Select Repositories to Track
+                </h3>
+                <p className="text-xs text-text-muted mt-0.5">
+                  {selectedRepos.size} selected
+                  {oauthUser && (
+                    <span> &middot; connected as <span className="text-purple-400">{oauthUser}</span></span>
+                  )}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowRepoPicker(false)}
+                className="text-text-muted hover:text-text-primary transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Search */}
+            <div className="px-5 py-3 border-b border-border-primary shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                <input
+                  type="text"
+                  value={repoSearchQuery}
+                  onChange={(e) => setRepoSearchQuery(e.target.value)}
+                  placeholder="Search repositories..."
+                  className="w-full rounded-lg border border-border-primary bg-bg-secondary pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-purple-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Repo List */}
+            <div className="flex-1 overflow-y-auto p-5">
+              {repoPickerLoading ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-purple-400 mb-3" />
+                  <p className="text-sm text-text-secondary">Loading repositories from GitHub...</p>
+                </div>
+              ) : repoGroups.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <GitBranch className="w-10 h-10 text-text-muted mb-3" />
+                  <p className="text-sm text-text-secondary">No repositories found</p>
+                  <p className="text-xs text-text-muted mt-1">Make sure your GitHub account has accessible repositories</p>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {repoGroups.map((group) => {
+                    const filtered = getFilteredRepos(group.repos);
+                    if (filtered.length === 0) return null;
+
+                    const allSelected = filtered.every((r) => selectedRepos.has(r.fullName));
+                    const someSelected = filtered.some((r) => selectedRepos.has(r.fullName));
+
+                    // Determine group icon
+                    const isOrgGroup = filtered[0]?.ownerType === 'Organization';
+                    const isCollabGroup = group.label === 'Collaborator Repositories';
+                    const GroupIcon = isOrgGroup ? Building2 : isCollabGroup ? Users : User;
+
+                    return (
+                      <div key={group.label}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <GroupIcon className="h-3.5 w-3.5 text-text-muted" />
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+                              {group.label} ({filtered.length})
+                            </h4>
+                          </div>
+                          <button
+                            onClick={() => toggleGroup(group)}
+                            className="text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+                          >
+                            {allSelected ? 'Deselect all' : 'Select all'}
+                          </button>
+                        </div>
+                        <div className="space-y-1">
+                          {filtered.map((repo) => (
+                            <label
+                              key={repo.fullName}
+                              className="flex items-center gap-3 rounded-md bg-bg-secondary px-3 py-2.5 cursor-pointer hover:bg-bg-elevated transition-colors group"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedRepos.has(repo.fullName)}
+                                onChange={() => toggleRepo(repo.fullName)}
+                                className="h-3.5 w-3.5 rounded border-border-primary text-purple-500 focus:ring-purple-500 focus:ring-offset-0 bg-bg-card cursor-pointer accent-purple-500"
+                              />
+                              <Github className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <span className="text-sm text-text-primary truncate block">
+                                  {repo.fullName}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {repo.language && (
+                                  <span className="flex items-center gap-1 text-xs text-text-muted">
+                                    <span className={`h-2 w-2 rounded-full ${languageColors[repo.language] ?? 'bg-gray-400'}`} />
+                                    {repo.language}
+                                  </span>
+                                )}
+                                {repo.private && (
+                                  <span className="inline-flex items-center gap-0.5 rounded bg-yellow-900/30 px-1.5 py-0.5 text-[10px] text-yellow-400">
+                                    <Lock className="h-2.5 w-2.5" />
+                                    Private
+                                  </span>
+                                )}
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {totalFilteredRepos === 0 && repoSearchQuery && (
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                      <Search className="w-8 h-8 text-text-muted mb-2" />
+                      <p className="text-sm text-text-secondary">No repositories match &ldquo;{repoSearchQuery}&rdquo;</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between p-5 border-t border-border-primary shrink-0 bg-bg-secondary/50">
+              <p className="text-xs text-text-muted">
+                {selectedRepos.size} repositor{selectedRepos.size === 1 ? 'y' : 'ies'} selected for tracking
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowRepoPicker(false)}
+                  className="border border-border-primary bg-bg-card hover:bg-bg-elevated text-text-secondary rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveTrackedRepos}
+                  disabled={repoPickerSaving}
+                  className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+                >
+                  {repoPickerSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4" />
+                  )}
+                  {repoPickerSaving ? 'Saving...' : 'Save Selection'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Integration Cards */}
       <div className="grid gap-4">
         {integrationCards.map((card) => {
@@ -525,6 +851,11 @@ function IntegrationsPage() {
                     <p className="mt-0.5 text-xs text-text-muted">
                       {card.description}
                     </p>
+                    {card.id === 'github' && isConnected && oauthUser && (
+                      <p className="mt-1 text-xs text-text-muted">
+                        Authenticated as <span className="text-purple-400 font-medium">{oauthUser}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -574,51 +905,63 @@ function IntegrationsPage() {
                 </div>
               </div>
 
-              {/* GitHub Connected: Show installed repos */}
-              {card.id === 'github' && isConnected && repos.length > 0 && (
+              {/* GitHub Connected: Show tracked repos */}
+              {card.id === 'github' && isConnected && (
                 <div className="mt-4 border-t border-border-primary pt-4">
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted">
                       Tracked Repositories ({repos.length})
                     </h4>
-                    <a
-                      href={`https://github.com/settings/installations`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={handleOpenRepoPicker}
                       className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
                     >
                       <ExternalLink className="h-3 w-3" />
-                      Manage in GitHub
-                    </a>
+                      Manage Repos
+                    </button>
                   </div>
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                    {repos.map((repo) => (
-                      <div
-                        key={repo.fullName ?? repo.name}
-                        className="flex items-center gap-3 rounded-md bg-bg-secondary px-3 py-2"
+                  {repos.length > 0 ? (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                      {repos.map((repo) => (
+                        <div
+                          key={repo.fullName ?? repo.name}
+                          className="flex items-center gap-3 rounded-md bg-bg-secondary px-3 py-2"
+                        >
+                          <Github className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                          <span className="text-sm text-text-primary truncate">
+                            {repo.fullName ?? repo.name}
+                          </span>
+                          {repo.language && (
+                            <span className="text-xs text-text-muted shrink-0">
+                              {repo.language}
+                            </span>
+                          )}
+                          {repo.private && (
+                            <span className="inline-flex items-center gap-0.5 rounded bg-yellow-900/30 px-1.5 py-0.5 text-[10px] text-yellow-400 shrink-0">
+                              <Lock className="h-2.5 w-2.5" />
+                              Private
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-6 text-center">
+                      <GitBranch className="w-8 h-8 text-text-muted mb-2" />
+                      <p className="text-sm text-text-secondary">No repositories tracked yet</p>
+                      <button
+                        onClick={handleOpenRepoPicker}
+                        className="mt-2 text-xs text-purple-400 hover:text-purple-300 transition-colors"
                       >
-                        <Github className="h-3.5 w-3.5 text-text-muted shrink-0" />
-                        <span className="text-sm text-text-primary truncate">
-                          {repo.fullName ?? repo.name}
-                        </span>
-                        {repo.language && (
-                          <span className="text-xs text-text-muted shrink-0">
-                            {repo.language}
-                          </span>
-                        )}
-                        {repo.private && (
-                          <span className="inline-flex items-center rounded bg-yellow-900/30 px-1.5 py-0.5 text-[10px] text-yellow-400 shrink-0">
-                            Private
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                        Select repositories to track
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
               {/* GitHub sync controls */}
-              {card.id === 'github' && isConnected && (
+              {card.id === 'github' && isConnected && repos.length > 0 && (
                 <div className="mt-4 border-t border-border-primary pt-4">
                   <div className="flex items-center justify-between">
                     <div>
@@ -628,7 +971,7 @@ function IntegrationsPage() {
                       <p className="text-xs text-text-muted">
                         {githubLastSyncAt
                           ? `Last synced: ${new Date(githubLastSyncAt).toLocaleString()}`
-                          : 'Commits and PRs are captured automatically via webhooks. Use Sync Now to pull any missed data.'}
+                          : 'Sync commits and PRs from your tracked repositories.'}
                       </p>
                     </div>
                     <button
