@@ -8,6 +8,46 @@ function generateId(): string {
   return Date.now().toString(36) + randomBytes(8).toString('hex');
 }
 
+// Retry detection: exact match or Jaccard similarity > 0.85 against prior
+// prompts in the same session. Kept server-side so the CLI hook stays fast
+// and doesn't need an extra DB round-trip to fetch session history.
+function normalizeText(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function jaccardSimilarity(a: string, b: string): number {
+  const setA = new Set(a.split(' '));
+  const setB = new Set(b.split(' '));
+  const intersection = new Set([...setA].filter((x) => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+  if (union.size === 0) return 0;
+  return intersection.size / union.size;
+}
+
+function wordCount(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
+// Skip ack-style prompts ("ok", "yes", "thanks") — too short to be a
+// meaningful retry, and their word sets trivially Jaccard-match.
+const RETRY_MIN_WORDS = 4;
+const RETRY_JACCARD_THRESHOLD = 0.85;
+const RETRY_PENALTY = 15;
+
+function isRetry(text: string, history: string[]): boolean {
+  if (wordCount(text) < RETRY_MIN_WORDS) return false;
+  const normalized = normalizeText(text);
+  for (const prior of history) {
+    if (wordCount(prior) < RETRY_MIN_WORDS) continue;
+    const priorNorm = normalizeText(prior);
+    if (normalized === priorNorm) return true;
+    if (jaccardSimilarity(normalized, priorNorm) > RETRY_JACCARD_THRESHOLD) return true;
+  }
+  return false;
+}
+
 interface CliTokenContext {
   userId: string;
   teamId: string;
@@ -175,6 +215,68 @@ export async function POST(request: Request) {
           .eq('session_id', data.session_id);
         const turnNumber = (count ?? 0) + 1;
 
+        // Retry detection against prior prompts in this session. The CLI
+        // hook ships with an empty history (it has no DB access), so this
+        // is where was_retry + retry_detected actually get decided.
+        let wasRetry = Boolean(data.was_retry);
+        const antiPatterns: string[] = Array.isArray(data.anti_patterns)
+          ? [...data.anti_patterns]
+          : [];
+        let heuristicScore: number | null =
+          typeof data.heuristic_score === 'number' ? data.heuristic_score : null;
+
+        // Don't gate on turnNumber here — the count+1 scheme above races
+        // under concurrent prompt_submits. Query the DB unconditionally; if
+        // this is a genuine first turn the SELECT returns 0 rows and we
+        // skip naturally. Cost: one empty indexed query on turn 1.
+        if (!wasRetry && typeof data.prompt_text === 'string' && data.prompt_text.length > 0) {
+          try {
+            const { data: priorTurns } = await admin
+              .from('ai_turns')
+              .select('prompt_text')
+              .eq('session_id', data.session_id)
+              .not('prompt_text', 'is', null)
+              .order('created_at', { ascending: false })
+              .limit(50);
+
+            const history = (priorTurns ?? [])
+              .map((t: { prompt_text: string | null }) => t.prompt_text)
+              .filter((p): p is string => typeof p === 'string' && p.length > 0);
+
+            if (history.length > 0 && isRetry(data.prompt_text, history)) {
+              wasRetry = true;
+              if (!antiPatterns.includes('retry_detected')) {
+                antiPatterns.push('retry_detected');
+                if (heuristicScore != null) {
+                  heuristicScore = Math.max(0, Math.min(100, heuristicScore - RETRY_PENALTY));
+                }
+              }
+              console.info(
+                JSON.stringify({
+                  event: 'retry_detected',
+                  sessionId: data.session_id,
+                  turnNumber,
+                  teamId: ctx.teamId,
+                  developerId: ctx.memberId,
+                  historySize: history.length,
+                  penaltyApplied: heuristicScore != null,
+                }),
+              );
+            }
+          } catch (err) {
+            // Non-critical — fall back to whatever the CLI reported. Log so
+            // operators can tell a silent regression from "no retries".
+            console.warn(
+              JSON.stringify({
+                event: 'retry_detection_failed',
+                sessionId: data.session_id,
+                turnNumber,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            );
+          }
+        }
+
         // Insert turn
         const { error: turnError } = await admin.from('ai_turns').insert({
           id: generateId(),
@@ -185,10 +287,10 @@ export async function POST(request: Request) {
           prompt_text: data.prompt_text,
           prompt_hash: data.prompt_hash,
           prompt_tokens_est: data.prompt_tokens_est,
-          heuristic_score: data.heuristic_score,
-          anti_patterns: data.anti_patterns,
+          heuristic_score: heuristicScore,
+          anti_patterns: antiPatterns,
           intent: data.intent,
-          was_retry: data.was_retry || false,
+          was_retry: wasRetry,
           created_at: new Date().toISOString(),
         });
 
