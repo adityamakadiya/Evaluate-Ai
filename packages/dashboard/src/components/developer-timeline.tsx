@@ -197,6 +197,7 @@ function TimelineEventItem({ event }: { event: TimelineEvent }) {
               {sessionId && (
                 <Link
                   href={`/sessions/${sessionId}`}
+                  prefetch={false}
                   className="inline-block mt-1.5 text-[11px] text-[#8b5cf6] hover:underline"
                 >
                   View session details
