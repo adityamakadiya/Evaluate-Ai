@@ -48,7 +48,7 @@ export function deleteCredentials(): void {
 }
 
 export function getApiUrl(): string {
-  return process.env.EVALUATEAI_API_URL || readCredentials()?.apiUrl || 'http://localhost:3456';
+  return process.env.EVALUATEAI_API_URL || readCredentials()?.apiUrl || 'https://evaluate-ai-dashboard.vercel.app';
 }
 
 export function getAuthToken(): string | null {

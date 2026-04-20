@@ -3,7 +3,24 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 const PUBLIC_ROUTES = ['/auth/login', '/auth/signup', '/auth/callback', '/auth/forgot-password', '/auth/reset-password', '/onboarding'];
 
+// Next.js sets these headers on `<Link>` prefetches. Prefetches are
+// cache-fill requests, not real navigations — running the Supabase auth
+// round-trip for each one multiplies outbound auth calls by the number of
+// visible links on the page (often 60+) and starves the real page request.
+// We short-circuit here; the page's own server-side checks still guard data.
+function isPrefetchRequest(request: NextRequest): boolean {
+  return (
+    request.headers.get('next-router-prefetch') === '1' ||
+    request.headers.get('purpose') === 'prefetch' ||
+    request.headers.get('x-purpose') === 'prefetch'
+  );
+}
+
 export async function middleware(request: NextRequest) {
+  if (isPrefetchRequest(request)) {
+    return NextResponse.next({ request: { headers: request.headers } });
+  }
+
   const { pathname } = request.nextUrl;
 
   // Skip auth check for public routes, API routes with Bearer tokens, and static assets

@@ -48,7 +48,10 @@ export async function GET() {
     weekStart.setDate(now.getDate() - dayOfWeek + 1);
     const weekStartStr = weekStart.toISOString().slice(0, 10);
 
-    // ── AI sessions ────────────────────────────────────────────────
+    // ── Build query builders (not awaited) ────────────────────────
+    // Each `query` is a PostgREST builder. Awaiting them inside `Promise.all`
+    // fires all requests in parallel over the Supabase HTTP connection, cutting
+    // total DB wall-time from (sum of queries) to (max of queries).
     let aiQuery = supabase
       .from('ai_sessions')
       .select('total_cost_usd, developer_id')
@@ -56,11 +59,7 @@ export async function GET() {
       .gte('started_at', weekStartStr)
       .lt('started_at', tomorrowStr);
     if (scope === 'self') aiQuery = aiQuery.eq('developer_id', memberId);
-    const { data: aiData } = await aiQuery;
 
-    const totalAiSpend = (aiData ?? []).reduce((sum, r) => sum + (r.total_cost_usd ?? 0), 0);
-
-    // ── Code changes (commits / PRs) ──────────────────────────────
     let codeQuery = supabase
       .from('code_changes')
       .select('type')
@@ -68,42 +67,18 @@ export async function GET() {
       .gte('created_at', weekStartStr)
       .lt('created_at', tomorrowStr);
     if (scope === 'self') codeQuery = codeQuery.eq('developer_id', memberId);
-    const { data: codeData } = await codeQuery;
 
-    const prsMerged = (codeData ?? []).filter(r => r.type === 'pr_merged').length;
-    const commits = (codeData ?? []).filter(r => r.type === 'commit').length;
-
-    // ── Tasks ─────────────────────────────────────────────────────
     let taskQuery = supabase
       .from('tasks')
       .select('status', { count: 'exact' })
       .eq('team_id', teamId)
       .gte('created_at', weekStartStr);
     if (scope === 'self') taskQuery = taskQuery.eq('assignee_id', memberId);
-    const { data: taskData, count: tasksTotal } = await taskQuery;
 
-    const tasksDone = (taskData ?? []).filter(r => r.status === 'completed').length;
+    const teamMembersQuery = scope === 'team'
+      ? supabase.from('team_members').select('id').eq('team_id', teamId)
+      : null;
 
-    // ── Active developers (team view only) ────────────────────────
-    let activeDevs = 0;
-    let totalDevs = 0;
-    if (scope === 'team') {
-      const { data: teamMembers } = await supabase
-        .from('team_members')
-        .select('id')
-        .eq('team_id', teamId);
-      const activeDeveloperIds = new Set(
-        (aiData ?? []).map(r => r.developer_id).filter(Boolean)
-      );
-      activeDevs = activeDeveloperIds.size;
-      totalDevs = (teamMembers ?? []).length;
-    } else {
-      // Self view: "activeDevs" doesn't make sense; surface a simple 1/1 signal.
-      activeDevs = (aiData ?? []).length > 0 ? 1 : 0;
-      totalDevs = 1;
-    }
-
-    // ── Activity timeline ─────────────────────────────────────────
     let timelineQuery = supabase
       .from('activity_timeline')
       .select('id, event_type, title, description, developer_id, metadata, created_at')
@@ -111,9 +86,76 @@ export async function GET() {
       .order('created_at', { ascending: false })
       .limit(20);
     if (scope === 'self') timelineQuery = timelineQuery.eq('developer_id', memberId);
-    const { data: timelineData } = await timelineQuery;
 
-    const timelineDevIds = [...new Set((timelineData ?? []).map(e => e.developer_id).filter(Boolean))];
+    let alertQuery = supabase
+      .from('alerts')
+      .select('id, title, severity, description, created_at')
+      .eq('team_id', teamId)
+      .eq('is_read', false)
+      .order('created_at', { ascending: false })
+      .limit(3);
+    if (scope === 'self') alertQuery = alertQuery.eq('developer_id', memberId);
+
+    let scoreQuery = supabase
+      .from('ai_sessions')
+      .select('avg_prompt_score')
+      .eq('team_id', teamId)
+      .gte('started_at', weekStartStr)
+      .not('avg_prompt_score', 'is', null);
+    if (scope === 'self') scoreQuery = scoreQuery.eq('developer_id', memberId);
+
+    // ── Run all independent queries concurrently ──────────────────
+    const [
+      aiResult,
+      codeResult,
+      taskResult,
+      teamMembersResult,
+      timelineResult,
+      alertResult,
+      scoreResult,
+    ] = await Promise.all([
+      aiQuery,
+      codeQuery,
+      taskQuery,
+      teamMembersQuery ?? Promise.resolve({ data: null as { id: string }[] | null }),
+      timelineQuery,
+      alertQuery,
+      scoreQuery,
+    ]);
+
+    const aiData = aiResult.data ?? [];
+    const codeData = codeResult.data ?? [];
+    const taskData = taskResult.data ?? [];
+    const tasksTotal = taskResult.count ?? 0;
+    const teamMembers = teamMembersResult.data ?? [];
+    const timelineData = timelineResult.data ?? [];
+    const alertData = alertResult.data ?? [];
+    const scoreData = scoreResult.data ?? [];
+
+    // ── AI spend / active devs ────────────────────────────────────
+    const totalAiSpend = aiData.reduce((sum, r) => sum + (r.total_cost_usd ?? 0), 0);
+
+    const prsMerged = codeData.filter(r => r.type === 'pr_merged').length;
+    const commits = codeData.filter(r => r.type === 'commit').length;
+
+    const tasksDone = taskData.filter(r => r.status === 'completed').length;
+
+    let activeDevs = 0;
+    let totalDevs = 0;
+    if (scope === 'team') {
+      const activeDeveloperIds = new Set(
+        aiData.map(r => r.developer_id).filter(Boolean)
+      );
+      activeDevs = activeDeveloperIds.size;
+      totalDevs = teamMembers.length;
+    } else {
+      // Self view: "activeDevs" doesn't make sense; surface a simple 1/1 signal.
+      activeDevs = aiData.length > 0 ? 1 : 0;
+      totalDevs = 1;
+    }
+
+    // ── Timeline developer names (depends on timelineData) ────────
+    const timelineDevIds = [...new Set(timelineData.map(e => e.developer_id).filter(Boolean))];
     const timelineDevNames: Record<string, string> = {};
     if (timelineDevIds.length > 0) {
       const { data: devRows } = await supabase
@@ -125,7 +167,7 @@ export async function GET() {
       }
     }
 
-    const timeline = (timelineData ?? []).map(e => ({
+    const timeline = timelineData.map(e => ({
       id: e.id,
       eventType: e.event_type,
       title: e.title,
@@ -135,18 +177,7 @@ export async function GET() {
       createdAt: e.created_at,
     }));
 
-    // ── Alerts (top 3 unread) ─────────────────────────────────────
-    let alertQuery = supabase
-      .from('alerts')
-      .select('id, title, severity, description, created_at')
-      .eq('team_id', teamId)
-      .eq('is_read', false)
-      .order('created_at', { ascending: false })
-      .limit(3);
-    if (scope === 'self') alertQuery = alertQuery.eq('developer_id', memberId);
-    const { data: alertData } = await alertQuery;
-
-    const alerts = (alertData ?? []).map(a => ({
+    const alerts = alertData.map(a => ({
       id: a.id,
       title: a.title,
       severity: a.severity,
@@ -155,20 +186,11 @@ export async function GET() {
     }));
 
     // ── Health score ──────────────────────────────────────────────
-    const taskCompletionRate = (tasksTotal ?? 0) > 0 ? tasksDone / (tasksTotal ?? 1) : 0.5;
+    const taskCompletionRate = tasksTotal > 0 ? tasksDone / tasksTotal : 0.5;
     const activeDevRate = totalDevs > 0 ? activeDevs / totalDevs : 0.5;
 
-    let scoreQuery = supabase
-      .from('ai_sessions')
-      .select('avg_prompt_score')
-      .eq('team_id', teamId)
-      .gte('started_at', weekStartStr)
-      .not('avg_prompt_score', 'is', null);
-    if (scope === 'self') scoreQuery = scoreQuery.eq('developer_id', memberId);
-    const { data: scoreData } = await scoreQuery;
-
-    const avgScore = (scoreData ?? []).length > 0
-      ? (scoreData ?? []).reduce((s, r) => s + (r.avg_prompt_score ?? 0), 0) / scoreData!.length
+    const avgScore = scoreData.length > 0
+      ? scoreData.reduce((s, r) => s + (r.avg_prompt_score ?? 0), 0) / scoreData.length
       : 50;
 
     const healthScore = Math.round(
@@ -184,7 +206,7 @@ export async function GET() {
         totalDevs,
         prsMerged,
         tasksDone,
-        tasksTotal: tasksTotal ?? 0,
+        tasksTotal,
         aiSpend: totalAiSpend,
         commits,
       },
