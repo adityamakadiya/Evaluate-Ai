@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { useAuth } from '@/components/auth-provider';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -9,16 +10,16 @@ import {
   CheckCircle2,
   XCircle,
   Activity,
-  Code,
-  Bot,
   Lightbulb,
+  MessageSquare,
 } from 'lucide-react';
+import DeveloperSessionsTab from '@/components/developer-sessions-tab';
 import DeveloperTimeline from '@/components/developer-timeline';
 import DeveloperWorkTab from '@/components/developer-work-tab';
-import DeveloperAiTab from '@/components/developer-ai-tab';
 import DeveloperInsightsTab from '@/components/developer-insights-tab';
+import LinkAccountsSection from '@/components/link-accounts-section';
 
-type Tab = 'timeline' | 'work' | 'ai' | 'insights';
+type Tab = 'sessions' | 'activity' | 'insights';
 
 interface DeveloperData {
   developer: {
@@ -49,7 +50,14 @@ interface DeveloperData {
     inputTokens: number | null;
     outputTokens: number | null;
     startedAt: string;
+    endedAt: string | null;
+    durationMin: number | null;
+    firstPrompt: string | null;
+    workSummary: string | null;
+    workTags: string[];
+    workCategory: string | null;
   }[];
+  sessionTotal: number;
   codeChanges: {
     id: string;
     type: string;
@@ -75,13 +83,19 @@ interface DeveloperData {
   antiPatterns: { pattern: string; count: number }[];
   commitsPerDay: { date: string; count: number }[];
   scoreTrend: { date: string; score: number }[];
+  costTrend: { date: string; cost: number }[];
+  tokenStats: {
+    week: { input: number; output: number; turns: number };
+    month: { input: number; output: number; turns: number };
+  };
+  usageByDayOfWeek: { day: string; sessions: number }[];
   insights: string[];
+  coachingTips: { pattern: string; count: number; label: string; tip: string; severity: 'high' | 'medium' | 'low' }[];
 }
 
 const TABS: { key: Tab; label: string; icon: typeof Activity }[] = [
-  { key: 'timeline', label: 'Activity Timeline', icon: Activity },
-  { key: 'work', label: 'Work', icon: Code },
-  { key: 'ai', label: 'AI Usage', icon: Bot },
+  { key: 'sessions', label: 'Sessions', icon: MessageSquare },
+  { key: 'activity', label: 'Activity', icon: Activity },
   { key: 'insights', label: 'Insights', icon: Lightbulb },
 ];
 
@@ -130,37 +144,28 @@ function LoadingSkeleton() {
 }
 
 export default function DeveloperDetailPage() {
+  const { user: authUser } = useAuth();
   const params = useParams();
   const id = params.id as string;
   const [data, setData] = useState<DeveloperData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>('timeline');
-  const [teamId, setTeamId] = useState<string>('');
-  const [userName, setUserName] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<Tab>('sessions');
 
-  useEffect(() => {
-    try {
-      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
-      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
-      if (team.id) setTeamId(team.id);
-      if (user.name) setUserName(user.name);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    if (!teamId) return;
-    setLoading(true);
-    fetch(`/api/dashboard/developers/${id}?team_id=${teamId}`, {
-      headers: { 'x-user-name': userName },
-    })
+  const fetchDeveloper = useCallback(() => {
+    if (!authUser) return;
+    fetch(`/api/dashboard/developers/${id}`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then(json => { setData(json); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
-  }, [id, teamId, userName]);
+  }, [id, authUser]);
+
+  useEffect(() => {
+    fetchDeveloper();
+  }, [fetchDeveloper]);
 
   return (
     <div className="min-h-screen">
@@ -168,7 +173,7 @@ export default function DeveloperDetailPage() {
       <div className="mb-4 animate-section">
         <Link
           href="/dashboard/developers"
-          className="inline-flex items-center gap-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+          className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary transition-colors"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to developers
@@ -193,7 +198,7 @@ export default function DeveloperDetailPage() {
               </div>
               <div>
                 <div className="flex items-center gap-3">
-                  <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
+                  <h1 className="text-2xl font-bold tracking-tight text-text-primary">
                     {data.developer.name}
                   </h1>
                   {data.developer.evaluateaiInstalled ? (
@@ -203,16 +208,11 @@ export default function DeveloperDetailPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-3 mt-1">
-                  <span className="text-sm text-[var(--text-muted)]">{data.developer.role ?? 'Developer'}</span>
+                  <span className="text-sm text-text-muted">{data.developer.role ?? 'Developer'}</span>
                   {data.developer.githubUsername && (
-                    <span className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                    <span className="flex items-center gap-1 text-xs text-text-muted">
                       <Github className="h-3 w-3" />
                       {data.developer.githubUsername}
-                    </span>
-                  )}
-                  {data.stats.avgPromptScore != null && (
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${getScoreBadge(data.stats.avgPromptScore)}`}>
-                      Score: {data.stats.avgPromptScore}
                     </span>
                   )}
                 </div>
@@ -220,14 +220,22 @@ export default function DeveloperDetailPage() {
             </div>
           </header>
 
+          {/* Linked Accounts */}
+          <div className="animate-section mb-6">
+            <LinkAccountsSection
+              developerId={id}
+              canEdit={authUser?.role === 'owner' || authUser?.role === 'manager' || authUser?.memberId === id}
+            />
+          </div>
+
           {/* Tabs */}
-          <div className="animate-section mb-6 border-b border-[var(--border-primary)]">
+          <div className="animate-section mb-6 border-b border-border-primary">
             <div className="flex gap-0">
               {TABS.map(tab => {
                 const isActive = activeTab === tab.key;
                 const tabClasses = isActive
-                  ? 'text-[var(--text-primary)] border-b-2 border-[#8b5cf6]'
-                  : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] border-b-2 border-transparent';
+                  ? 'text-text-primary border-b-2 border-[#8b5cf6]'
+                  : 'text-text-muted hover:text-text-secondary border-b-2 border-transparent';
                 return (
                   <button
                     key={tab.key}
@@ -244,28 +252,11 @@ export default function DeveloperDetailPage() {
 
           {/* Tab content */}
           <div className="animate-section">
-            {activeTab === 'timeline' && (
-              <DeveloperTimeline developerId={id} teamId={teamId} userName={userName} />
-            )}
-            {activeTab === 'work' && (
-              <DeveloperWorkTab
-                codeChanges={data.codeChanges}
-                tasks={data.tasks}
-                commitsPerDay={data.commitsPerDay}
-                stats={{
-                  commits: data.stats.commits,
-                  prs: data.stats.prs,
-                  reviews: data.stats.reviews,
-                  tasksCompleted: data.stats.tasksCompleted,
-                  tasksAssigned: data.stats.tasksAssigned,
-                }}
-              />
-            )}
-            {activeTab === 'ai' && (
-              <DeveloperAiTab
-                sessions={data.sessions}
-                modelUsage={data.modelUsage}
-                antiPatterns={data.antiPatterns}
+            {activeTab === 'sessions' && (
+              <DeveloperSessionsTab
+                developerId={id}
+                initialSessions={data.sessions}
+                initialTotal={data.sessionTotal}
                 stats={{
                   totalAiCost: data.stats.totalAiCost,
                   avgPromptScore: data.stats.avgPromptScore,
@@ -273,18 +264,27 @@ export default function DeveloperDetailPage() {
                 }}
               />
             )}
+            {activeTab === 'activity' && (
+              <div className="space-y-8">
+                <DeveloperTimeline developerId={id} />
+                <DeveloperWorkTab
+                  codeChanges={data.codeChanges}
+                  tasks={data.tasks}
+                  commitsPerDay={data.commitsPerDay}
+                  stats={{
+                    commits: data.stats.commits,
+                    prs: data.stats.prs,
+                    reviews: data.stats.reviews,
+                    tasksCompleted: data.stats.tasksCompleted,
+                    tasksAssigned: data.stats.tasksAssigned,
+                  }}
+                />
+              </div>
+            )}
             {activeTab === 'insights' && (
               <DeveloperInsightsTab
                 insights={data.insights}
-                scoreTrend={data.scoreTrend}
-                stats={{
-                  totalAiCost: data.stats.totalAiCost,
-                  avgPromptScore: data.stats.avgPromptScore,
-                  commits: data.stats.commits,
-                  prs: data.stats.prs,
-                  tasksCompleted: data.stats.tasksCompleted,
-                  tasksAssigned: data.stats.tasksAssigned,
-                }}
+                coachingTips={data.coachingTips ?? []}
               />
             )}
           </div>

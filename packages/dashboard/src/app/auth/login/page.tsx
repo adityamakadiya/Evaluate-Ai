@@ -1,16 +1,21 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { LogIn, Mail, Lock, AlertCircle } from 'lucide-react';
+import { LogIn, Mail, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const redirect = searchParams.get('redirect') || '/dashboard';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,24 +23,19 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+      const supabase = getSupabaseBrowser();
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || 'Login failed');
+      if (authError) {
+        setError(authError.message);
         return;
       }
 
-      // Store user data in localStorage for MVP
-      localStorage.setItem('evaluateai-user', JSON.stringify(data.user));
-      localStorage.setItem('evaluateai-session', JSON.stringify(data.session));
-
-      router.push('/');
+      router.push(redirect);
+      router.refresh();
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -44,10 +44,10 @@ export default function LoginPage() {
   };
 
   const inputClasses = [
-    'w-full rounded-lg border border-[var(--border-primary)] bg-[var(--bg-input)]',
-    'px-4 py-2.5 pl-10 text-sm text-[var(--text-primary)]',
-    'placeholder:text-[var(--text-muted)]',
-    'focus:border-[var(--border-focus)] focus:outline-none',
+    'w-full rounded-lg border border-border-primary bg-bg-input',
+    'px-4 py-2.5 pl-10 text-sm text-text-primary',
+    'placeholder:text-text-muted',
+    'focus:border-border-focus focus:outline-none',
     'transition-colors',
   ].join(' ');
 
@@ -61,16 +61,16 @@ export default function LoginPage() {
             <path d="M8 5.5L11.5 7.5v3L8 12.5 4.5 10.5v-3L8 5.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" fill="rgba(255,255,255,0.25)" />
           </svg>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
+        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
           Welcome back
         </h1>
-        <p className="text-sm text-[var(--text-secondary)] mt-1">
+        <p className="text-sm text-text-secondary mt-1">
           Sign in to your EvaluateAI account
         </p>
       </div>
 
       {/* Card */}
-      <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-6">
+      <div className="bg-bg-card border border-border-primary rounded-lg p-6">
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="flex items-center gap-2 bg-red-900/20 border border-red-800/50 rounded-lg px-4 py-3 text-red-300 text-sm">
@@ -80,11 +80,11 @@ export default function LoginPage() {
           )}
 
           <div>
-            <label htmlFor="email" className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
+            <label htmlFor="email" className="block text-xs font-medium text-text-secondary mb-1.5">
               Email
             </label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--text-muted)]" />
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
               <input
                 id="email"
                 type="email"
@@ -98,20 +98,33 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-              Password
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="password" className="block text-xs font-medium text-text-secondary">
+                Password
+              </label>
+              <Link href="/auth/forgot-password" className="text-xs text-[#8b5cf6] hover:text-[#a78bfa] transition-colors">
+                Forgot password?
+              </Link>
+            </div>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--text-muted)]" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
               <input
                 id="password"
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
                 required
-                className={inputClasses}
+                className={`${inputClasses} pr-10`}
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
             </div>
           </div>
 
@@ -131,57 +144,20 @@ export default function LoginPage() {
       </div>
 
       {/* Footer link */}
-      <p className="text-center text-sm text-[var(--text-muted)] mt-6">
+      <p className="text-center text-sm text-text-muted mt-6">
         Don&apos;t have an account?{' '}
         <Link href="/auth/signup" className="text-[#8b5cf6] hover:text-[#a78bfa] transition-colors">
           Sign up
         </Link>
       </p>
-
-      {/* Demo Quick Login */}
-      <div className="mt-8 pt-6 border-t border-[var(--border-primary)]">
-        <p className="text-xs text-[var(--text-muted)] text-center mb-3 uppercase tracking-wider font-medium">Quick Demo Login</p>
-        <div className="grid gap-2">
-          {[
-            { name: 'Aditya Makadiya', email: 'aditya@acme.dev', role: 'Owner', color: '#8b5cf6', id: '32709dfb-7637-4562-a806-584f36db302a', teamId: '943dc5d1-1b71-49dd-8862-43d67f450183', score: 85 },
-            { name: 'Priya Sharma', email: 'priya@acme.dev', role: 'Manager', color: '#3b82f6', id: '4fe275ec-d331-4674-87e1-9f248f6c6144', teamId: '943dc5d1-1b71-49dd-8862-43d67f450183', score: 74 },
-            { name: 'Jake Wilson', email: 'jake@acme.dev', role: 'Developer', color: '#ef4444', id: '2e7e98b2-9da0-46b6-a8c8-b9c53f94d048', teamId: '943dc5d1-1b71-49dd-8862-43d67f450183', score: 38 },
-            { name: 'Sara Chen', email: 'sara@acme.dev', role: 'Developer', color: '#22c55e', id: '0caea587-774c-44ae-8da5-4c8d149fb74f', teamId: '943dc5d1-1b71-49dd-8862-43d67f450183', score: null },
-            { name: 'Rob Kumar', email: 'rob@acme.dev', role: 'Developer', color: '#f59e0b', id: '54436876-e490-433b-af13-4426a8cfa6c4', teamId: '943dc5d1-1b71-49dd-8862-43d67f450183', score: null },
-          ].map((demo) => (
-            <button
-              key={demo.email}
-              onClick={() => {
-                localStorage.setItem('evaluateai-user', JSON.stringify({ name: demo.name, email: demo.email, id: demo.id }));
-                localStorage.setItem('evaluateai-team', JSON.stringify({ id: demo.teamId, name: 'Acme Engineering' }));
-                router.push('/dashboard');
-              }}
-              className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg border border-[var(--border-primary)] hover:border-[var(--border-hover)] bg-[var(--bg-card)] hover:bg-[var(--bg-elevated)] transition-all text-left group"
-            >
-              <div
-                className="h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                style={{ backgroundColor: demo.color }}
-              >
-                {demo.name.split(' ').map(n => n[0]).join('')}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-[var(--text-primary)] truncate">{demo.name}</p>
-                <p className="text-xs text-[var(--text-muted)]">{demo.role} · {demo.email}</p>
-              </div>
-              {demo.score !== null && (
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                  demo.score >= 70 ? 'bg-emerald-900/30 text-emerald-400' :
-                  demo.score >= 40 ? 'bg-yellow-900/30 text-yellow-400' :
-                  'bg-red-900/30 text-red-400'
-                }`}>
-                  {demo.score}
-                </span>
-              )}
-              <span className="text-xs text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity">→</span>
-            </button>
-          ))}
-        </div>
-      </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';
-
-function getTeamId(request: NextRequest): string | null {
-  return request.nextUrl.searchParams.get('team_id')
-    || request.headers.get('x-team-id')
-    || null;
-}
+import { getAuthContext } from '@/lib/auth';
+import { getSupabaseAdmin } from '@/lib/supabase-server';
 
 const VALID_FILTERS = new Set(['ai', 'code', 'meeting', 'task']);
 
 const FILTER_EVENT_TYPES: Record<string, string[]> = {
-  ai: ['ai_prompt', 'ai_response', 'ai_session'],
+  ai: ['ai_prompt', 'ai_response', 'ai_session', 'ai_session_start', 'ai_session_end'],
   code: ['commit', 'pr_opened', 'pr_merged', 'review'],
   meeting: ['meeting'],
   task: ['task_completed', 'task_assigned'],
@@ -21,28 +16,31 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const ctx = await getAuthContext();
+    if (!ctx) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const teamId = ctx.teamId;
     const { id } = await params;
-    const teamId = getTeamId(request);
-    const supabase = getSupabase();
+
+    // RBAC: Developers can only view their own timeline
+    if (ctx.role === 'developer' && id !== ctx.memberId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const supabase = getSupabaseAdmin();
     const { searchParams } = request.nextUrl;
 
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '20', 10), 1), 100);
     const offset = Math.max(parseInt(searchParams.get('offset') ?? '0', 10), 0);
     const filterType = searchParams.get('type');
 
-    // Get the developer's user_id from team_members
-    let memberQuery = supabase
-      .from('team_members')
-      .select('user_id')
-      .eq('id', id);
-    if (teamId) memberQuery = memberQuery.eq('team_id', teamId);
-    const { data: member } = await memberQuery.single();
-
-    const developerId = member?.user_id ?? id;
+    // Use the member_id directly — activity_timeline.developer_id stores team_members.id
+    const developerId = id;
 
     let query = supabase
       .from('activity_timeline')
-      .select('id, event_type, title, description, developer_name, metadata, created_at', { count: 'exact' })
+      .select('id, event_type, title, description, developer_id, metadata, created_at', { count: 'exact' })
       .eq('developer_id', developerId);
     if (teamId) query = query.eq('team_id', teamId);
     query = query.order('created_at', { ascending: false });
@@ -60,12 +58,23 @@ export async function GET(
 
     const { data, count } = await query;
 
+    // Resolve developer name from team_members
+    let developerName: string | null = null;
+    {
+      const { data: memberRow } = await supabase
+        .from('team_members')
+        .select('name')
+        .eq('id', developerId)
+        .single();
+      developerName = memberRow?.name ?? null;
+    }
+
     const events = (data ?? []).map(e => ({
       id: e.id,
       eventType: e.event_type,
       title: e.title,
       description: e.description,
-      developerName: e.developer_name,
+      developerName,
       metadata: e.metadata,
       createdAt: e.created_at,
     }));

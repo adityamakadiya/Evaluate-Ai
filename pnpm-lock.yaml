@@ -21,9 +21,6 @@ importers:
 
   packages/cli:
     dependencies:
-      '@supabase/supabase-js':
-        specifier: ^2.49.1
-        version: 2.101.1
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
@@ -39,9 +36,6 @@ importers:
       evaluateai-core:
         specifier: workspace:*
         version: link:../core
-      ulid:
-        specifier: ^2.4.0
-        version: 2.4.0
     devDependencies:
       '@types/node':
         specifier: ^20.19.39
@@ -58,18 +52,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.39.0
         version: 0.39.0
-      '@supabase/supabase-js':
-        specifier: ^2.101.1
-        version: 2.101.1
-      dotenv:
-        specifier: ^17.4.0
-        version: 17.4.0
       js-tiktoken:
         specifier: ^1.0.18
         version: 1.0.21
-      ulid:
-        specifier: ^2.3.0
-        version: 2.4.0
     devDependencies:
       typescript:
         specifier: ^5.8.0
@@ -80,12 +65,18 @@ importers:
 
   packages/dashboard:
     dependencies:
+      '@supabase/ssr':
+        specifier: ^0.10.0
+        version: 0.10.0(@supabase/supabase-js@2.101.1)
       '@supabase/supabase-js':
         specifier: ^2.49.1
         version: 2.101.1
       evaluateai-core:
         specifier: workspace:*
         version: link:../core
+      jose:
+        specifier: ^6.2.2
+        version: 6.2.2
       lucide-react:
         specifier: ^0.500.0
         version: 0.500.0(react@19.2.4)
@@ -904,6 +895,11 @@ packages:
   '@supabase/realtime-js@2.101.1':
     resolution: {integrity: sha512-Oa6dno0OB9I+hv5do5zsZHbFu41ViZnE9IWjmkeeF/8fPmB5fWoHGqeTYEC3/0DAgtpUoFJa4FpvzFH0SBHo1Q==}
     engines: {node: '>=20.0.0'}
+
+  '@supabase/ssr@0.10.0':
+    resolution: {integrity: sha512-36jIu+DuKzg5EgA3fnH+zHvwASvpKcL4zPgmHoZaULroS5Q4mzeHcM69zJ0sXUHddO5IcHjQNZJ9Vyhl/DdbRw==}
+    peerDependencies:
+      '@supabase/supabase-js': ^2.100.1
 
   '@supabase/storage-js@2.101.1':
     resolution: {integrity: sha512-WhTaUOBgeEvnKLy95Cdlp6+D5igSF/65yC727w1olxbet5nzUvMlajKUWyzNtQu2efrz2cQ7FcdVBdQqgT9YKQ==}
@@ -3153,10 +3149,6 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  ulid@2.4.0:
-    resolution: {integrity: sha512-fIRiVTJNcSRmXKPZtGzFQv9WRrZ3M9eoptl/teFJvjOzmpU+/K/JH6HZ8deBfb5vMEpicJcLn7JmvdknlMq7Zg==}
-    hasBin: true
-
   unbox-primitive@1.1.0:
     resolution: {integrity: sha512-nWJ91DjeOkej/TA8pXQ3myruKpKEYgqvpw9lz4OPHj/NWFNluYrjbz9j01CJ8yKQd2g4jFoOkINCTW2I5LEEyw==}
     engines: {node: '>= 0.4'}
@@ -3936,6 +3928,11 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@supabase/ssr@0.10.0(@supabase/supabase-js@2.101.1)':
+    dependencies:
+      '@supabase/supabase-js': 2.101.1
+      cookie: 1.1.1
 
   '@supabase/storage-js@2.101.1':
     dependencies:
@@ -6447,8 +6444,6 @@ snapshots:
       - supports-color
 
   typescript@5.9.3: {}
-
-  ulid@2.4.0: {}
 
   unbox-primitive@1.1.0:
     dependencies:

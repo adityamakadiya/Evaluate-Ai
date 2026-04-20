@@ -2,6 +2,24 @@ import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { matchCodeChangeToTasks } from '@/lib/services/task-matcher';
+
+/**
+ * POST /api/integrations/github/webhook
+ *
+ * Handles incoming GitHub webhook events (push, pull_request, pull_request_review).
+ *
+ * OPTIONAL: This endpoint is NOT required for the OAuth-based sync flow.
+ * Currently, syncing is done via manual "Sync Now" or (future) cron polling.
+ *
+ * This webhook is kept for future use if:
+ * - A GitHub App is re-enabled for real-time event delivery
+ * - Organization webhooks are configured to point here
+ * - Repository-level webhooks are set up via the GitHub API
+ *
+ * To enable: set GITHUB_WEBHOOK_SECRET in env and configure the webhook URL
+ * in GitHub (org or repo settings) pointing to this endpoint.
+ */
 
 // ---------- Signature Verification ----------
 
@@ -18,42 +36,6 @@ function verifySignature(payload: string, signature: string | null): boolean {
   }
 }
 
-// ---------- Helper: Find team by repo owner ----------
-
-async function findTeamByRepo(
-  supabase: ReturnType<typeof getSupabaseAdmin>,
-  repoFullName: string
-): Promise<string | null> {
-  // Look up integrations where config contains a repo matching this full_name
-  const { data: integrations } = await supabase
-    .from('integrations')
-    .select('team_id, config')
-    .eq('provider', 'github')
-    .eq('status', 'active');
-
-  if (!integrations) return null;
-
-  for (const integration of integrations) {
-    const config = integration.config as Record<string, unknown> | null;
-    const repos = config?.repos as Array<Record<string, unknown>> | undefined;
-    if (repos?.some((r) => r.full_name === repoFullName)) {
-      return integration.team_id;
-    }
-  }
-
-  // Fallback: match by repo owner (org or user)
-  const repoOwner = repoFullName.split('/')[0];
-  for (const integration of integrations) {
-    const config = integration.config as Record<string, unknown> | null;
-    const repos = config?.repos as Array<Record<string, unknown>> | undefined;
-    if (repos?.some((r) => (r.full_name as string)?.startsWith(repoOwner + '/'))) {
-      return integration.team_id;
-    }
-  }
-
-  return null;
-}
-
 // ---------- Helper: Map GitHub username to developer_id ----------
 
 async function mapGitHubUser(
@@ -64,7 +46,6 @@ async function mapGitHubUser(
 ): Promise<string | null> {
   if (!githubUsername && !email) return null;
 
-  // Try by github_username first
   if (githubUsername) {
     const { data } = await supabase
       .from('team_members')
@@ -72,11 +53,9 @@ async function mapGitHubUser(
       .eq('team_id', teamId)
       .ilike('github_username', githubUsername)
       .single();
-
     if (data) return data.id;
   }
 
-  // Fallback: try by email
   if (email) {
     const { data } = await supabase
       .from('team_members')
@@ -84,7 +63,6 @@ async function mapGitHubUser(
       .eq('team_id', teamId)
       .ilike('email', email)
       .single();
-
     if (data) return data.id;
   }
 
@@ -103,7 +81,6 @@ async function insertTimelineEvent(
     description: string | null;
     metadata: Record<string, unknown>;
     sourceId: string;
-    sourceTable: string;
     occurredAt: string;
   }
 ) {
@@ -120,16 +97,39 @@ async function insertTimelineEvent(
   });
 }
 
+// ---------- Helper: Find team by repo ----------
+
+async function findTeamByRepo(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  repoFullName: string
+): Promise<string | null> {
+  const { data: integrations } = await supabase
+    .from('integrations')
+    .select('team_id, config')
+    .eq('provider', 'github')
+    .eq('status', 'active');
+
+  if (!integrations) return null;
+
+  for (const integration of integrations) {
+    const config = integration.config as Record<string, unknown> | null;
+    const trackedRepos = config?.tracked_repos as string[] | undefined;
+    if (trackedRepos?.includes(repoFullName)) {
+      return integration.team_id;
+    }
+  }
+
+  return null;
+}
+
 // ---------- Event Handlers ----------
 
 async function handlePush(
   supabase: ReturnType<typeof getSupabaseAdmin>,
+  teamId: string,
   payload: Record<string, unknown>
 ) {
   const repoFullName = (payload.repository as Record<string, unknown>)?.full_name as string;
-  const teamId = await findTeamByRepo(supabase, repoFullName);
-  if (!teamId) return;
-
   const ref = payload.ref as string;
   const branch = ref?.replace('refs/heads/', '') ?? null;
   const commits = payload.commits as Array<Record<string, unknown>> | undefined;
@@ -147,6 +147,15 @@ async function handlePush(
     const sha = commit.id as string;
     const message = commit.message as string;
     const timestamp = commit.timestamp as string;
+
+    // Idempotency: skip if already processed
+    const { data: existing } = await supabase
+      .from('code_changes')
+      .select('id')
+      .eq('external_id', sha)
+      .eq('team_id', teamId)
+      .single();
+    if (existing) continue;
 
     const { data: codeChange } = await supabase
       .from('code_changes')
@@ -173,21 +182,22 @@ async function handlePush(
       eventType: 'commit',
       title: `Committed: ${message?.split('\n')[0] ?? sha.slice(0, 8)}`,
       description: `${filesChanged} file(s) changed in ${repoFullName}`,
-      metadata: {
-        sha,
-        repo: repoFullName,
-        branch,
-        files_changed: filesChanged,
-      },
+      metadata: { sha, repo: repoFullName, branch, files_changed: filesChanged },
       sourceId: codeChange?.id ?? sha,
-      sourceTable: 'code_changes',
       occurredAt: timestamp ?? new Date().toISOString(),
     });
+
+    if (codeChange?.id) {
+      matchCodeChangeToTasks(codeChange.id, teamId, developerId).catch((err) =>
+        console.error('Task matching failed for commit:', err)
+      );
+    }
   }
 }
 
 async function handlePullRequest(
   supabase: ReturnType<typeof getSupabaseAdmin>,
+  teamId: string,
   payload: Record<string, unknown>
 ) {
   const action = payload.action as string;
@@ -195,22 +205,13 @@ async function handlePullRequest(
   const repo = payload.repository as Record<string, unknown>;
   if (!pr || !repo) return;
 
-  const repoFullName = repo.full_name as string;
-  const teamId = await findTeamByRepo(supabase, repoFullName);
-  if (!teamId) return;
-
-  // Determine event type
   let type: string;
-  if (action === 'opened') {
-    type = 'pr_opened';
-  } else if (action === 'closed' && pr.merged) {
-    type = 'pr_merged';
-  } else if (action === 'closed') {
-    type = 'pr_closed';
-  } else {
-    return; // Ignore other PR actions (edited, labeled, etc.)
-  }
+  if (action === 'opened') type = 'pr_opened';
+  else if (action === 'closed' && pr.merged) type = 'pr_merged';
+  else if (action === 'closed') type = 'pr_closed';
+  else return;
 
+  const repoFullName = repo.full_name as string;
   const senderUsername = (payload.sender as Record<string, unknown>)?.login as string | null;
   const developerId = await mapGitHubUser(supabase, teamId, senderUsername, null);
 
@@ -223,13 +224,22 @@ async function handlePullRequest(
   const branch = (pr.head as Record<string, unknown>)?.ref as string | null;
   const timestamp = (pr.merged_at ?? pr.updated_at ?? pr.created_at) as string;
 
+  const externalId = `pr-${prNumber}-${action}`;
+  const { data: existing } = await supabase
+    .from('code_changes')
+    .select('id')
+    .eq('external_id', externalId)
+    .eq('team_id', teamId)
+    .single();
+  if (existing) return;
+
   const { data: codeChange } = await supabase
     .from('code_changes')
     .insert({
       team_id: teamId,
       developer_id: developerId,
       type,
-      external_id: `pr-${prNumber}`,
+      external_id: externalId,
       repo: repoFullName,
       branch,
       title: prTitle,
@@ -254,22 +264,21 @@ async function handlePullRequest(
     eventType: type,
     title: `${eventLabels[type]}: #${prNumber} ${prTitle}`,
     description: `${changedFiles} file(s), +${additions} -${deletions} in ${repoFullName}`,
-    metadata: {
-      pr_number: prNumber,
-      repo: repoFullName,
-      branch,
-      additions,
-      deletions,
-      files_changed: changedFiles,
-    },
-    sourceId: codeChange?.id ?? `pr-${prNumber}`,
-    sourceTable: 'code_changes',
+    metadata: { pr_number: prNumber, repo: repoFullName, branch, additions, deletions, files_changed: changedFiles },
+    sourceId: codeChange?.id ?? externalId,
     occurredAt: timestamp ?? new Date().toISOString(),
   });
+
+  if (codeChange?.id) {
+    matchCodeChangeToTasks(codeChange.id, teamId, developerId).catch((err) =>
+      console.error('Task matching failed for PR:', err)
+    );
+  }
 }
 
 async function handlePullRequestReview(
   supabase: ReturnType<typeof getSupabaseAdmin>,
+  teamId: string,
   payload: Record<string, unknown>
 ) {
   const action = payload.action as string;
@@ -281,17 +290,23 @@ async function handlePullRequestReview(
   if (!review || !pr || !repo) return;
 
   const repoFullName = repo.full_name as string;
-  const teamId = await findTeamByRepo(supabase, repoFullName);
-  if (!teamId) return;
-
   const reviewerUsername = (review.user as Record<string, unknown>)?.login as string | null;
   const developerId = await mapGitHubUser(supabase, teamId, reviewerUsername, null);
 
-  const reviewState = review.state as string; // approved, changes_requested, commented
+  const reviewState = review.state as string;
   const reviewBody = review.body as string | null;
   const prNumber = pr.number as number;
   const prTitle = pr.title as string;
   const submittedAt = review.submitted_at as string;
+
+  const externalId = `review-${review.id}`;
+  const { data: existing } = await supabase
+    .from('code_changes')
+    .select('id')
+    .eq('external_id', externalId)
+    .eq('team_id', teamId)
+    .single();
+  if (existing) return;
 
   const { data: codeChange } = await supabase
     .from('code_changes')
@@ -299,7 +314,7 @@ async function handlePullRequestReview(
       team_id: teamId,
       developer_id: developerId,
       type: 'review',
-      external_id: `review-${review.id}`,
+      external_id: externalId,
       repo: repoFullName,
       branch: (pr.head as Record<string, unknown>)?.ref as string | null,
       title: `Review on #${prNumber}: ${prTitle}`,
@@ -324,14 +339,8 @@ async function handlePullRequestReview(
     eventType: 'review',
     title: `${stateLabels[reviewState] ?? 'Reviewed'} PR #${prNumber}: ${prTitle}`,
     description: reviewBody?.slice(0, 200) ?? null,
-    metadata: {
-      pr_number: prNumber,
-      repo: repoFullName,
-      review_state: reviewState,
-      reviewer: reviewerUsername,
-    },
-    sourceId: codeChange?.id ?? `review-${review.id}`,
-    sourceTable: 'code_changes',
+    metadata: { pr_number: prNumber, repo: repoFullName, review_state: reviewState, reviewer: reviewerUsername },
+    sourceId: codeChange?.id ?? externalId,
     occurredAt: submittedAt ?? new Date().toISOString(),
   });
 }
@@ -351,21 +360,32 @@ export async function POST(request: NextRequest) {
     const payload = JSON.parse(rawBody);
     const supabase = getSupabaseAdmin();
 
+    // Find team by repo (matches against tracked_repos in integration config)
+    const repoFullName =
+      (payload.repository as Record<string, unknown>)?.full_name as string | undefined;
+
+    let teamId: string | null = null;
+    if (repoFullName) {
+      teamId = await findTeamByRepo(supabase, repoFullName);
+    }
+
+    if (!teamId) {
+      return NextResponse.json({ message: 'No team found for this event' }, { status: 200 });
+    }
+
     switch (event) {
       case 'push':
-        await handlePush(supabase, payload);
+        await handlePush(supabase, teamId, payload);
         break;
       case 'pull_request':
-        await handlePullRequest(supabase, payload);
+        await handlePullRequest(supabase, teamId, payload);
         break;
       case 'pull_request_review':
-        await handlePullRequestReview(supabase, payload);
+        await handlePullRequestReview(supabase, teamId, payload);
         break;
       case 'ping':
-        // GitHub sends ping when webhook is first configured
         return NextResponse.json({ message: 'pong' });
       default:
-        // Ignore unhandled events
         return NextResponse.json({ message: `Ignored event: ${event}` });
     }
 

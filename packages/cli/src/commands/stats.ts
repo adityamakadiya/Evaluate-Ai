@@ -1,24 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { apiRequest } from '../utils/api.js';
 import { printHeader, formatCost, formatTokens, formatScore, formatTrend } from '../utils/display.js';
-
-function getSupabase(): SupabaseClient | null {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false } });
-}
-
-/**
- * Get the start-of-day ISO string for N days ago.
- */
-function daysAgo(n: number): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - n);
-  return d.toISOString();
-}
 
 interface PeriodStats {
   sessionCount: number;
@@ -30,73 +13,77 @@ interface PeriodStats {
   antiPatterns: Record<string, number>;
 }
 
-async function queryPeriodStats(supabase: SupabaseClient, since: string): Promise<PeriodStats> {
-  const { data: sessRows } = await supabase
-    .from('ai_sessions')
-    .select('*')
-    .gte('started_at', since);
+interface ApiPeriodBucket {
+  sessions: number;
+  turns: number;
+  tokens: number;
+  cost: number;
+  avgScore: number | null;
+  efficiency: number | null;
+}
 
-  const rows = sessRows ?? [];
-  const sessionCount = rows.length;
-  let totalTurns = 0;
-  let totalTokens = 0;
-  let totalCost = 0;
-  let scoreSum = 0;
-  let scoreCount = 0;
-  let effSum = 0;
-  let effCount = 0;
+interface StatsApiResponse {
+  today?: ApiPeriodBucket;
+  thisWeek?: ApiPeriodBucket;
+  thisMonth?: ApiPeriodBucket;
+  previousDay?: ApiPeriodBucket;
+  previousWeek?: ApiPeriodBucket;
+  previousMonth?: ApiPeriodBucket;
+  topAntiPatterns?: Array<{ pattern: string; count: number }>;
+}
 
-  for (const s of rows) {
-    totalTurns += s.total_turns ?? 0;
-    totalTokens += (s.total_input_tokens ?? 0) + (s.total_output_tokens ?? 0);
-    totalCost += s.total_cost_usd ?? 0;
-    if (s.avg_prompt_score != null) {
-      scoreSum += s.avg_prompt_score;
-      scoreCount++;
-    }
-    if (s.efficiency_score != null) {
-      effSum += s.efficiency_score;
-      effCount++;
-    }
+type PeriodKey = 'today' | 'week' | 'month';
+
+const EMPTY_STATS: PeriodStats = {
+  sessionCount: 0,
+  totalTurns: 0,
+  totalTokens: 0,
+  totalCost: 0,
+  avgScore: null,
+  avgEfficiency: null,
+  antiPatterns: {},
+};
+
+function toPeriodStats(
+  bucket: ApiPeriodBucket | undefined,
+  antiPatterns: Record<string, number>,
+): PeriodStats {
+  if (!bucket) return { ...EMPTY_STATS, antiPatterns };
+  return {
+    sessionCount: bucket.sessions ?? 0,
+    totalTurns: bucket.turns ?? 0,
+    totalTokens: bucket.tokens ?? 0,
+    totalCost: bucket.cost ?? 0,
+    avgScore: bucket.avgScore ?? null,
+    avgEfficiency: bucket.efficiency ?? null,
+    antiPatterns,
+  };
+}
+
+/**
+ * Fetch stats from `/api/stats?period=...` and project the response shape
+ * (period buckets + top anti-patterns) onto the CLI's PeriodStats view.
+ * Returns both the current-period and previous-period aggregates so `--compare`
+ * can render without issuing a second request.
+ */
+async function queryPeriodStats(periodKey: PeriodKey): Promise<{ current: PeriodStats; previous: PeriodStats }> {
+  const { ok, data } = await apiRequest<StatsApiResponse>(`/api/stats?period=${periodKey}`);
+
+  if (!ok || !data) {
+    return { current: { ...EMPTY_STATS }, previous: { ...EMPTY_STATS } };
   }
 
-  // Gather anti-patterns from turns
-  const antiPatterns: Record<string, number> = {};
-
-  if (rows.length > 0) {
-    const { data: turnRows } = await supabase
-      .from('ai_turns')
-      .select('anti_patterns')
-      .gte('created_at', since);
-
-    for (const t of (turnRows ?? [])) {
-      if (!t.anti_patterns) continue;
-      try {
-        const patterns: unknown = typeof t.anti_patterns === 'string'
-          ? JSON.parse(t.anti_patterns)
-          : t.anti_patterns;
-        if (Array.isArray(patterns)) {
-          for (const p of patterns) {
-            const id = typeof p === 'string' ? p : (p as { id?: string })?.id;
-            if (id) {
-              antiPatterns[id] = (antiPatterns[id] ?? 0) + 1;
-            }
-          }
-        }
-      } catch {
-        // skip malformed JSON
-      }
-    }
+  const antiPatternMap: Record<string, number> = {};
+  for (const { pattern, count } of data.topAntiPatterns ?? []) {
+    if (pattern) antiPatternMap[pattern] = count;
   }
+
+  const currKey = periodKey === 'today' ? 'today' : periodKey === 'week' ? 'thisWeek' : 'thisMonth';
+  const prevKey = periodKey === 'today' ? 'previousDay' : periodKey === 'week' ? 'previousWeek' : 'previousMonth';
 
   return {
-    sessionCount,
-    totalTurns,
-    totalTokens,
-    totalCost,
-    avgScore: scoreCount > 0 ? scoreSum / scoreCount : null,
-    avgEfficiency: effCount > 0 ? effSum / effCount : null,
-    antiPatterns,
+    current: toPeriodStats(data[currKey], antiPatternMap),
+    previous: toPeriodStats(data[prevKey], antiPatternMap),
   };
 }
 
@@ -153,45 +140,20 @@ export const statsCommand = new Command('stats')
   .option('--month', 'Show this month\'s stats')
   .option('--compare', 'Compare with previous period')
   .action(async (opts: { week?: boolean; month?: boolean; compare?: boolean }) => {
-    const supabase = getSupabase();
-    if (!supabase) {
-      console.log(chalk.red('  Supabase not configured.'));
-      console.log(chalk.gray('  Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables.'));
-      return;
-    }
-
-    let periodDays: number;
+    let periodKey: PeriodKey;
     let label: string;
 
     if (opts.month) {
-      periodDays = 30;
+      periodKey = 'month';
       label = 'This Month';
     } else if (opts.week) {
-      periodDays = 7;
+      periodKey = 'week';
       label = 'This Week';
     } else {
-      periodDays = 1;
+      periodKey = 'today';
       label = 'Today';
     }
 
-    const since = daysAgo(periodDays === 1 ? 0 : periodDays);
-    const stats = await queryPeriodStats(supabase, since);
-
-    let prev: PeriodStats | undefined;
-    if (opts.compare) {
-      const prevSince = daysAgo(periodDays * 2);
-      prev = await queryPeriodStats(supabase, prevSince);
-      // Subtract current period from the "since 2x ago" to get only previous period
-      prev = {
-        sessionCount: prev.sessionCount - stats.sessionCount,
-        totalTurns: prev.totalTurns - stats.totalTurns,
-        totalTokens: prev.totalTokens - stats.totalTokens,
-        totalCost: prev.totalCost - stats.totalCost,
-        avgScore: prev.avgScore,
-        avgEfficiency: prev.avgEfficiency,
-        antiPatterns: prev.antiPatterns,
-      };
-    }
-
-    printStats(label, stats, prev);
+    const { current, previous } = await queryPeriodStats(periodKey);
+    printStats(label, current, opts.compare ? previous : undefined);
   });

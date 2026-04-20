@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { calculateCost, normalizeModelId } from '../models/pricing.js';
 
 /**
  * A single entry from a Claude Code transcript JSONL file.
@@ -54,6 +56,15 @@ export interface TranscriptResponse {
 }
 
 /**
+ * Per-turn summary keyed by prompt hash.
+ */
+export interface PerTurnData {
+  promptHash: string;
+  responseTokens: number;
+  toolCalls: string[];
+}
+
+/**
  * Full session summary from transcript.
  */
 export interface TranscriptSummary {
@@ -67,20 +78,13 @@ export interface TranscriptSummary {
   totalCostUsd: number;
 }
 
-// Model pricing per 1M tokens
-const PRICING: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  'claude-opus-4-6': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
-  'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  'claude-haiku-4-5-20251001': { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
-};
-
 function calculateExactCost(usage: TranscriptUsage): number {
-  const pricing = PRICING[usage.model] ?? PRICING['claude-sonnet-4-6'];
-  return (
-    (usage.inputTokens * pricing.input +
-     usage.outputTokens * pricing.output +
-     usage.cacheReadTokens * pricing.cacheRead +
-     usage.cacheWriteTokens * pricing.cacheWrite) / 1_000_000
+  return calculateCost(
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.model,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens
   );
 }
 
@@ -118,7 +122,7 @@ export function getLatestResponse(transcriptPath: string): TranscriptResponse | 
   // Find the last assistant message with usage data
   for (let i = lines.length - 1; i >= 0; i--) {
     const entry = parseLine(lines[i]);
-    if (!entry) continue;
+    if (!entry?.message) continue;
 
     const msg = entry.message;
     if (msg.role === 'assistant' && msg.usage?.output_tokens) {
@@ -136,7 +140,7 @@ export function getLatestResponse(transcriptPath: string): TranscriptResponse | 
         outputTokens: msg.usage.output_tokens ?? 0,
         cacheReadTokens: msg.usage.cache_read_input_tokens ?? 0,
         cacheWriteTokens: msg.usage.cache_creation_input_tokens ?? 0,
-        model: msg.model ?? 'unknown',
+        model: normalizeModelId(msg.model ?? 'unknown'),
         totalTokens: (msg.usage.input_tokens ?? 0) + (msg.usage.output_tokens ?? 0) +
                      (msg.usage.cache_read_input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0),
       };
@@ -172,12 +176,17 @@ export function getSessionSummary(transcriptPath: string): TranscriptSummary | n
 
     for (const line of lines) {
       const entry = parseLine(line);
-      if (!entry) continue;
+      if (!entry?.message) continue;
 
       const msg = entry.message;
 
       if (msg.role === 'user') {
-        userMessageCount++;
+        // Only count real user prompts, not tool_result messages
+        const content = msg.content;
+        const isToolResult = Array.isArray(content) && content.length > 0 && content[0]?.type === 'tool_result';
+        if (!isToolResult) {
+          userMessageCount++;
+        }
       }
 
       if (msg.role === 'assistant' && msg.usage) {
@@ -191,7 +200,7 @@ export function getSessionSummary(transcriptPath: string): TranscriptSummary | n
         totalCacheReadTokens += cacheRead;
         totalCacheWriteTokens += cacheWrite;
 
-        if (msg.model) model = msg.model;
+        if (msg.model) model = normalizeModelId(msg.model);
 
         const responseText = (msg.content ?? [])
           .filter(c => c.type === 'text' && c.text)
@@ -204,7 +213,7 @@ export function getSessionSummary(transcriptPath: string): TranscriptSummary | n
 
         const usage: TranscriptUsage = {
           inputTokens, outputTokens, cacheReadTokens: cacheRead,
-          cacheWriteTokens: cacheWrite, model: msg.model ?? model,
+          cacheWriteTokens: cacheWrite, model: normalizeModelId(msg.model ?? model),
           totalTokens: inputTokens + outputTokens + cacheRead + cacheWrite,
         };
 
@@ -231,6 +240,103 @@ export function getSessionSummary(transcriptPath: string): TranscriptSummary | n
       responses,
       totalCostUsd: calculateExactCost(summaryUsage),
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract user prompt text from a transcript entry's content.
+ */
+function extractUserPromptText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block?.type === 'text' && typeof block.text === 'string') return block.text;
+    }
+  }
+  return '';
+}
+
+/**
+ * SHA-256 hash — matches the CLI hook's hashText() function.
+ */
+function hashText(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+/**
+ * Get per-turn summary from a transcript file.
+ * Groups assistant responses by user turn and returns per-turn
+ * response token counts and tool calls, keyed by prompt hash.
+ *
+ * This enables the CLI Stop hook to update individual turns
+ * in the database with response data that would otherwise be missing.
+ */
+export function getPerTurnSummary(transcriptPath: string): PerTurnData[] | null {
+  try {
+    const content = readFileSync(transcriptPath, 'utf-8');
+    const lines = content.trim().split('\n');
+
+    // Parse all entries
+    const entries: Array<{ role: string; model?: string; content?: unknown[]; usage?: { output_tokens?: number } }> = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line);
+        const msg = parsed?.message ?? parsed;
+        if (msg?.role) entries.push(msg);
+      } catch { continue; }
+    }
+
+    const result: PerTurnData[] = [];
+    let i = 0;
+    while (i < entries.length) {
+      const entry = entries[i];
+      if (entry.role === 'user') {
+        const c = entry.content;
+        const isToolResult = Array.isArray(c) && c.length > 0 && (c[0] as Record<string, unknown>)?.type === 'tool_result';
+        if (!isToolResult) {
+          const promptText = extractUserPromptText(c);
+          const hash = hashText(promptText);
+
+          let responseTokens = 0;
+          const toolCalls: string[] = [];
+
+          let j = i + 1;
+          while (j < entries.length) {
+            const e = entries[j];
+            if (e.role === 'user') {
+              const uc = e.content;
+              const isTool = Array.isArray(uc) && uc.length > 0 && (uc[0] as Record<string, unknown>)?.type === 'tool_result';
+              if (!isTool) break;
+            }
+            if (e.role === 'assistant') {
+              if (e.usage) {
+                responseTokens += e.usage.output_tokens ?? 0;
+              }
+              if (Array.isArray(e.content)) {
+                for (const block of e.content) {
+                  const b = block as Record<string, unknown>;
+                  if (b?.type === 'tool_use' && b?.name) {
+                    toolCalls.push(b.name as string);
+                  }
+                }
+              }
+            }
+            j++;
+          }
+
+          result.push({
+            promptHash: hash,
+            responseTokens,
+            toolCalls: [...new Set(toolCalls)],
+          });
+        }
+      }
+      i++;
+    }
+
+    return result;
   } catch {
     return null;
   }

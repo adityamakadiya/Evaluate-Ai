@@ -1,13 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
+import { useAuth } from '@/components/auth-provider';
 import {
   Users,
-  GitCommit,
-  GitPullRequest,
-  Eye,
-  DollarSign,
   CheckCircle2,
   XCircle,
   ArrowUpDown,
@@ -48,7 +45,7 @@ function getStatusConfig(status: string): { label: string; color: string } {
     case 'on_track': return { label: 'On Track', color: 'text-emerald-400' };
     case 'at_risk': return { label: 'At Risk', color: 'text-yellow-400' };
     case 'inactive': return { label: 'Inactive', color: 'text-red-400' };
-    default: return { label: status, color: 'text-[var(--text-muted)]' };
+    default: return { label: status, color: 'text-text-muted' };
   }
 }
 
@@ -93,35 +90,26 @@ function LoadingSkeleton() {
 }
 
 export default function DevelopersPage() {
+  const { user: authUser } = useAuth();
   const [developers, setDevelopers] = useState<Developer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('name');
-  const [teamId, setTeamId] = useState<string>('');
-  const [userName, setUserName] = useState<string>('');
 
-  useEffect(() => {
-    try {
-      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
-      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
-      if (team.id) setTeamId(team.id);
-      if (user.name) setUserName(user.name);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    if (!teamId) return;
-    setLoading(true);
-    fetch(`/api/dashboard/developers?sort=${sortBy}&team_id=${teamId}`, {
-      headers: { 'x-user-name': userName },
-    })
+  const fetchDevelopers = useCallback(() => {
+    if (!authUser) return;
+    fetch(`/api/dashboard/developers?sort=${sortBy}`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
       .then(json => { setDevelopers(json.developers); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
-  }, [sortBy, teamId, userName]);
+  }, [sortBy, authUser]);
+
+  useEffect(() => {
+    fetchDevelopers();
+  }, [fetchDevelopers]);
 
   return (
     <div className="min-h-screen">
@@ -129,17 +117,17 @@ export default function DevelopersPage() {
       <header className="mb-8 animate-section">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">Developers</h1>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
+            <h1 className="text-2xl font-bold tracking-tight text-text-primary">Developers</h1>
+            <p className="mt-1 text-sm text-text-muted">
               {developers.length} team member{developers.length !== 1 ? 's' : ''} this week
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <ArrowUpDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+            <ArrowUpDown className="h-3.5 w-3.5 text-text-muted" />
             <select
               value={sortBy}
               onChange={e => { setLoading(true); setSortBy(e.target.value as SortOption); }}
-              className="text-sm bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg px-3 py-1.5 text-[var(--text-secondary)] focus:outline-none focus:border-[var(--border-focus)]"
+              className="text-sm bg-bg-card border border-border-primary rounded-lg px-3 py-1.5 text-text-secondary focus:outline-none focus:border-border-focus"
             >
               <option value="name">Name</option>
               <option value="score">Score</option>
@@ -150,15 +138,15 @@ export default function DevelopersPage() {
         </div>
       </header>
 
-      {!teamId && !loading && (
+      {!authUser && !loading && (
         <div className="animate-section flex flex-col items-center justify-center py-16 text-center">
-          <Users className="w-10 h-10 text-[var(--text-muted)] mb-3" />
-          <p className="text-sm text-[var(--text-secondary)]">No team linked</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">Login and link to a team to see developers.</p>
+          <Users className="w-10 h-10 text-text-muted mb-3" />
+          <p className="text-sm text-text-secondary">No team linked</p>
+          <p className="text-xs text-text-muted mt-1">Login and link to a team to see developers.</p>
         </div>
       )}
 
-      {loading && teamId && <LoadingSkeleton />}
+      {loading && authUser && <LoadingSkeleton />}
 
       {error && (
         <div className="animate-section rounded-lg border border-red-900/50 bg-red-950/20 p-5 text-sm text-red-400">
@@ -166,11 +154,11 @@ export default function DevelopersPage() {
         </div>
       )}
 
-      {!loading && !error && teamId && developers.length === 0 && (
+      {!loading && !error && authUser && developers.length === 0 && (
         <div className="animate-section flex flex-col items-center justify-center py-16 text-center">
-          <Users className="w-10 h-10 text-[var(--text-muted)] mb-3" />
-          <p className="text-sm text-[var(--text-secondary)]">No team members found</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">Add team members in Settings to get started.</p>
+          <Users className="w-10 h-10 text-text-muted mb-3" />
+          <p className="text-sm text-text-secondary">No team members found</p>
+          <p className="text-xs text-text-muted mt-1">Add team members in Settings to get started.</p>
         </div>
       )}
 
@@ -192,7 +180,7 @@ function DeveloperCard({ developer: dev }: { developer: Developer }) {
 
   return (
     <Link href={`/dashboard/developers/${dev.id}`}>
-      <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-colors cursor-pointer group">
+      <div className="bg-bg-card border border-border-primary rounded-lg p-5 hover:border-border-hover transition-colors cursor-pointer group">
         {/* Header: Avatar + Name + Score */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -200,10 +188,10 @@ function DeveloperCard({ developer: dev }: { developer: Developer }) {
               {initials}
             </div>
             <div>
-              <p className="text-sm font-semibold text-[var(--text-primary)] group-hover:text-[#8b5cf6] transition-colors">
+              <p className="text-sm font-semibold text-text-primary group-hover:text-[#8b5cf6] transition-colors">
                 {dev.name}
               </p>
-              <p className="text-xs text-[var(--text-muted)]">{dev.role ?? 'Developer'}</p>
+              <p className="text-xs text-text-muted">{dev.role ?? 'Developer'}</p>
             </div>
           </div>
           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${getScoreColor(dev.alignmentScore)}`}>
@@ -211,54 +199,15 @@ function DeveloperCard({ developer: dev }: { developer: Developer }) {
           </span>
         </div>
 
-        {/* This week stats */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-1 mb-0.5">
-              <GitCommit className="h-3 w-3 text-[var(--text-muted)]" />
-              <span className="text-sm font-semibold text-[var(--text-primary)]">{dev.commits}</span>
-            </div>
-            <span className="text-[10px] text-[var(--text-muted)] uppercase">Commits</span>
-          </div>
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-1 mb-0.5">
-              <GitPullRequest className="h-3 w-3 text-[var(--text-muted)]" />
-              <span className="text-sm font-semibold text-[var(--text-primary)]">{dev.prs}</span>
-            </div>
-            <span className="text-[10px] text-[var(--text-muted)] uppercase">PRs</span>
-          </div>
-          <div className="text-center">
-            <div className="flex items-center justify-center gap-1 mb-0.5">
-              <Eye className="h-3 w-3 text-[var(--text-muted)]" />
-              <span className="text-sm font-semibold text-[var(--text-primary)]">{dev.reviews}</span>
-            </div>
-            <span className="text-[10px] text-[var(--text-muted)] uppercase">Reviews</span>
-          </div>
-        </div>
-
-        {/* AI cost + prompt score */}
-        <div className="flex items-center justify-between mb-3 text-xs">
-          <div className="flex items-center gap-1 text-[var(--text-secondary)]">
-            <DollarSign className="h-3 w-3" />
-            <span className="font-mono">${dev.aiCost.toFixed(2)}</span>
-            <span className="text-[var(--text-muted)]">AI cost</span>
-          </div>
-          {dev.avgPromptScore != null && (
-            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${getScoreColor(dev.avgPromptScore)}`}>
-              Avg {dev.avgPromptScore}
-            </span>
-          )}
-        </div>
-
         {/* Bottom: installed + status */}
-        <div className="flex items-center justify-between pt-3 border-t border-[var(--border-primary)]">
+        <div className="flex items-center justify-between pt-3 border-t border-border-primary">
           <div className="flex items-center gap-1">
             {dev.evaluateaiInstalled ? (
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
             ) : (
               <XCircle className="h-3.5 w-3.5 text-red-400" />
             )}
-            <span className="text-[10px] text-[var(--text-muted)]">evaluateai</span>
+            <span className="text-[10px] text-text-muted">evaluateai</span>
           </div>
           <div className="flex items-center gap-1">
             {dev.status === 'at_risk' && <AlertTriangle className="h-3 w-3 text-yellow-400" />}

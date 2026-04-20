@@ -16,7 +16,11 @@ import {
   sessionsCommand,
   configCommand,
   exportCommand,
-  syncCommand,
+
+  loginCommand,
+  logoutCommand,
+  whoamiCommand,
+  setupCommand,
   CLI_VERSION,
 } from '../dist/index.js';
 
@@ -27,15 +31,21 @@ program
   .version(CLI_VERSION)
   .description('EvaluateAI — AI coding assistant quality analyzer');
 
-// Register commands
+// Auth commands
+program.addCommand(loginCommand);
+program.addCommand(logoutCommand);
+program.addCommand(whoamiCommand);
+
+// Setup & team commands
+program.addCommand(setupCommand);
 program.addCommand(initCommand);
 program.addCommand(teamCommand);
+
+// Data commands
 program.addCommand(statsCommand);
 program.addCommand(sessionsCommand);
 program.addCommand(configCommand);
 program.addCommand(exportCommand);
-program.addCommand(syncCommand);
-
 // Hook subcommand: `evalai hook <event>`
 // This is called by Claude Code hooks — it needs to be fast.
 const hookCommand = new Command('hook')

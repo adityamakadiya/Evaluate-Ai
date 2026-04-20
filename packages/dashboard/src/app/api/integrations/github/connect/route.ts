@@ -1,39 +1,37 @@
 import { NextResponse } from 'next/server';
 import { NextRequest } from 'next/server';
+import { buildAuthorizationUrl, isGitHubOAuthConfigured } from '@/lib/github-oauth';
+import { guardApi } from '@/lib/auth';
 
+/**
+ * GET /api/integrations/github/connect?team_id=xxx
+ *
+ * Redirects the user to GitHub's OAuth authorization page.
+ * After authorization, GitHub redirects to /api/integrations/github/callback.
+ *
+ * RBAC: owner and manager only.
+ */
 export async function GET(request: NextRequest) {
   try {
-    const clientId = process.env.GITHUB_CLIENT_ID;
-    if (!clientId) {
+    const teamId = request.nextUrl.searchParams.get('team_id');
+    if (!teamId) {
+      return NextResponse.json({ error: 'team_id is required' }, { status: 400 });
+    }
+
+    const guard = await guardApi({ teamId, roles: ['owner', 'manager'] });
+    if (guard.response) return guard.response;
+
+    if (!isGitHubOAuthConfigured()) {
       return NextResponse.json(
-        { error: 'GitHub integration not configured' },
+        { error: 'GitHub OAuth not configured. Set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET.' },
         { status: 500 }
       );
     }
 
-    const teamId = request.nextUrl.searchParams.get('team_id');
-    if (!teamId) {
-      return NextResponse.json(
-        { error: 'team_id is required' },
-        { status: 400 }
-      );
-    }
-
-    // Encode team_id as state parameter (base64 for URL safety)
     const state = Buffer.from(JSON.stringify({ team_id: teamId })).toString('base64url');
+    const authUrl = buildAuthorizationUrl(state);
 
-    const redirectUri = new URL('/api/integrations/github/callback', request.nextUrl.origin).toString();
-
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      scope: 'repo',
-      state,
-    });
-
-    const githubOAuthUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
-
-    return NextResponse.redirect(githubOAuthUrl);
+    return NextResponse.redirect(authUrl);
   } catch (err) {
     console.error('GitHub connect error:', err);
     return NextResponse.json(

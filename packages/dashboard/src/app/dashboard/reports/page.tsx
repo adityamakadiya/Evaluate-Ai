@@ -1,15 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
+import { useAuth } from '@/components/auth-provider';
 import {
   FileBarChart,
   GitCommit,
   GitPullRequest,
-  Bot,
-  DollarSign,
   CheckCircle2,
   Eye,
-  Code2,
   Calendar,
   ChevronLeft,
   ChevronRight,
@@ -84,26 +82,22 @@ interface WeeklyData {
   }>;
 }
 
-function getScoreColor(score: number): string {
-  if (score >= 80) return 'text-emerald-400';
-  if (score >= 60) return 'text-blue-400';
-  if (score >= 40) return 'text-yellow-400';
-  return 'text-red-400';
-}
-
-function getScoreBg(score: number): string {
-  if (score >= 80) return 'bg-emerald-900/30';
-  if (score >= 60) return 'bg-blue-900/30';
-  if (score >= 40) return 'bg-yellow-900/30';
-  return 'bg-red-900/30';
-}
-
 function formatDate(dateStr: string): string {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
   });
+}
+
+/** Build YYYY-MM-DD from local date parts (no timezone drift) */
+function toDateString(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function Skeleton({ className = '' }: { className?: string }) {
@@ -123,46 +117,41 @@ function LoadingSkeleton() {
   );
 }
 
+function getTodayStr(): string {
+  return toDateString(new Date());
+}
+
+function getWeekStartStr(): string {
+  const now = new Date();
+  const dayOfWeek = now.getDay() || 7;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek + 1);
+  return toDateString(monday);
+}
+
 export default function ReportsPage() {
   const [tab, setTab] = useState<TabType>('daily');
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [weekStart, setWeekStart] = useState(() => {
-    const now = new Date();
-    const dayOfWeek = now.getDay() || 7;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - dayOfWeek + 1);
-    return monday.toISOString().slice(0, 10);
-  });
+  // Use empty string as SSR-safe default; set real date on mount to avoid hydration mismatch
+  const [selectedDate, setSelectedDate] = useState('');
+  const [weekStart, setWeekStart] = useState('');
+  const [mounted, setMounted] = useState(false);
 
+  useEffect(() => {
+    setSelectedDate(getTodayStr());
+    setWeekStart(getWeekStartStr());
+    setMounted(true);
+  }, []);
+
+  const { user: authUser } = useAuth();
   const [dailyReports, setDailyReports] = useState<DailyReport[]>([]);
   const [weeklyData, setWeeklyData] = useState<WeeklyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [teamId, setTeamId] = useState<string>('');
-  const [userName, setUserName] = useState<string>('');
 
-  useEffect(() => {
-    try {
-      const team = JSON.parse(localStorage.getItem('evaluateai-team') || '{}');
-      const user = JSON.parse(localStorage.getItem('evaluateai-user') || '{}');
-      if (team.id) setTeamId(team.id);
-      if (user.name) setUserName(user.name);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    if (!teamId) return;
-    setLoading(true);
-    setError(null);
-
-    const headers = { 'x-user-name': userName };
+  const fetchReports = useCallback(() => {
+    if (!authUser || !mounted) return;
 
     if (tab === 'daily') {
-      fetch(`/api/reports/daily?team_id=${teamId}&date=${selectedDate}`, { headers })
+      fetch(`/api/reports/daily?date=${selectedDate}`)
         .then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
@@ -173,7 +162,7 @@ export default function ReportsPage() {
         })
         .catch(err => { setError(err.message); setLoading(false); });
     } else if (tab === 'weekly') {
-      fetch(`/api/reports/weekly?team_id=${teamId}&week_start=${weekStart}`, { headers })
+      fetch(`/api/reports/weekly?week_start=${weekStart}`)
         .then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.json();
@@ -183,21 +172,33 @@ export default function ReportsPage() {
           setLoading(false);
         })
         .catch(err => { setError(err.message); setLoading(false); });
-    } else {
-      setLoading(false);
     }
-  }, [tab, selectedDate, weekStart, teamId, userName]);
+  }, [tab, selectedDate, weekStart, authUser, mounted]);
+
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
 
   const navigateDate = (direction: number) => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    d.setDate(d.getDate() + direction);
-    setSelectedDate(d.toISOString().slice(0, 10));
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const next = new Date(y, m - 1, d + direction);
+    setSelectedDate(toDateString(next));
+    setLoading(true);
+    setError(null);
   };
 
   const navigateWeek = (direction: number) => {
-    const d = new Date(weekStart + 'T00:00:00');
-    d.setDate(d.getDate() + direction * 7);
-    setWeekStart(d.toISOString().slice(0, 10));
+    const [y, m, d] = weekStart.split('-').map(Number);
+    const next = new Date(y, m - 1, d + direction * 7);
+    setWeekStart(toDateString(next));
+    setLoading(true);
+    setError(null);
+  };
+
+  const handleTabChange = (t: TabType) => {
+    setTab(t);
+    setLoading(true);
+    setError(null);
   };
 
   const tabs: { key: TabType; label: string }[] = [
@@ -210,16 +211,16 @@ export default function ReportsPage() {
     <div className="min-h-screen">
       {/* Header */}
       <header className="mb-8 animate-section">
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
+        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
           Reports
         </h1>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">
+        <p className="mt-1 text-sm text-text-muted">
           Auto-generated daily and weekly reports
         </p>
       </header>
 
       {/* Tab selector */}
-      <div className="animate-section mb-6 flex gap-1 bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-1 w-fit">
+      <div className="animate-section mb-6 flex gap-1 bg-bg-card border border-border-primary rounded-lg p-1 w-fit">
         {tabs.map(t => {
           const isActive = tab === t.key;
           return (
@@ -228,9 +229,9 @@ export default function ReportsPage() {
               className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 isActive
                   ? 'bg-purple-600 text-white'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)]'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
               }`}
-              onClick={() => setTab(t.key)}
+              onClick={() => handleTabChange(t.key)}
             >
               {t.label}
             </button>
@@ -239,52 +240,52 @@ export default function ReportsPage() {
       </div>
 
       {/* Date picker */}
-      {tab === 'daily' && (
+      {mounted && tab === 'daily' && (
         <div className="animate-section mb-6 flex items-center gap-3">
           <button
             onClick={() => navigateDate(-1)}
-            className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-[var(--text-muted)]" />
+            <Calendar className="h-4 w-4 text-text-muted" />
             <input
               type="date"
               value={selectedDate}
               onChange={e => setSelectedDate(e.target.value)}
-              className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-md px-3 py-1.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-purple-500"
+              className="bg-bg-card border border-border-primary rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-purple-500"
             />
           </div>
           <button
             onClick={() => navigateDate(1)}
-            className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
-          <span className="text-xs text-[var(--text-muted)]">
+          <span className="text-xs text-text-muted">
             {formatDate(selectedDate)}
           </span>
         </div>
       )}
 
-      {tab === 'weekly' && (
+      {mounted && tab === 'weekly' && (
         <div className="animate-section mb-6 flex items-center gap-3">
           <button
             onClick={() => navigateWeek(-1)}
-            className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-[var(--text-muted)]" />
-            <span className="text-sm text-[var(--text-primary)]">
+            <Calendar className="h-4 w-4 text-text-muted" />
+            <span className="text-sm text-text-primary">
               Week of {formatDate(weekStart)}
             </span>
           </div>
           <button
             onClick={() => navigateWeek(1)}
-            className="p-1.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] transition-colors"
+            className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition-colors"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -292,7 +293,7 @@ export default function ReportsPage() {
       )}
 
       {/* Content */}
-      {loading && <LoadingSkeleton />}
+      {loading && tab !== 'sprint' && <LoadingSkeleton />}
 
       {error && (
         <div className="animate-section rounded-lg border border-red-900/50 bg-red-950/20 p-5 text-sm text-red-400">
@@ -305,9 +306,9 @@ export default function ReportsPage() {
         <div className="animate-section">
           {dailyReports.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <FileBarChart className="w-10 h-10 text-[var(--text-muted)] mb-3" />
-              <p className="text-sm text-[var(--text-secondary)]">No reports for this date</p>
-              <p className="text-xs text-[var(--text-muted)] mt-1">
+              <FileBarChart className="w-10 h-10 text-text-muted mb-3" />
+              <p className="text-sm text-text-secondary">No reports for this date</p>
+              <p className="text-xs text-text-muted mt-1">
                 Reports are generated daily by the cron system
               </p>
             </div>
@@ -326,9 +327,9 @@ export default function ReportsPage() {
         <div className="animate-section">
           {!weeklyData || weeklyData.developerStats.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <FileBarChart className="w-10 h-10 text-[var(--text-muted)] mb-3" />
-              <p className="text-sm text-[var(--text-secondary)]">No weekly data available</p>
-              <p className="text-xs text-[var(--text-muted)] mt-1">
+              <FileBarChart className="w-10 h-10 text-text-muted mb-3" />
+              <p className="text-sm text-text-secondary">No weekly data available</p>
+              <p className="text-xs text-text-muted mt-1">
                 Weekly reports aggregate daily data
               </p>
             </div>
@@ -341,9 +342,9 @@ export default function ReportsPage() {
       {/* Sprint tab */}
       {!loading && !error && tab === 'sprint' && (
         <div className="animate-section flex flex-col items-center justify-center py-16 text-center">
-          <Lock className="w-10 h-10 text-[var(--text-muted)] mb-3" />
-          <p className="text-sm text-[var(--text-secondary)]">Coming in Phase 2</p>
-          <p className="text-xs text-[var(--text-muted)] mt-1">
+          <Lock className="w-10 h-10 text-text-muted mb-3" />
+          <p className="text-sm text-text-secondary">Coming in Phase 2</p>
+          <p className="text-xs text-text-muted mt-1">
             Sprint reports with Jira integration and burndown charts
           </p>
         </div>
@@ -353,52 +354,29 @@ export default function ReportsPage() {
 }
 
 function DailyReportCard({ report }: { report: DailyReport }) {
-  const scoreColor = report.aiAvgPromptScore != null
-    ? getScoreColor(report.aiAvgPromptScore)
-    : 'text-[var(--text-muted)]';
-  const scoreBg = report.aiAvgPromptScore != null
-    ? getScoreBg(report.aiAvgPromptScore)
-    : 'bg-[var(--bg-elevated)]';
-
   return (
-    <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-colors">
-      {/* Developer name and score */}
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+    <div className="bg-bg-card border border-border-primary rounded-lg p-5 hover:border-border-hover transition-colors">
+      {/* Developer name */}
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold text-text-primary">
           {report.developerName}
         </h3>
-        {report.aiAvgPromptScore != null && (
-          <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-bold ${scoreColor} ${scoreBg}`}>
-            {Math.round(report.aiAvgPromptScore)}
-          </span>
-        )}
       </div>
 
       {/* AI Summary */}
       {report.aiSummary && (
-        <p className="text-xs text-[var(--text-secondary)] mb-3 leading-relaxed">
+        <p className="text-xs text-text-secondary mb-3 leading-relaxed">
           {report.aiSummary}
         </p>
       )}
 
       {/* Stats grid */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <MiniStat icon={GitCommit} label="Commits" value={report.commitsCount} />
         <MiniStat icon={GitPullRequest} label="PRs" value={report.prsOpened + report.prsMerged} />
         <MiniStat icon={Eye} label="Reviews" value={report.reviewsGiven} />
-        <MiniStat icon={Bot} label="AI Sessions" value={report.aiSessionsCount} />
-        <MiniStat icon={DollarSign} label="AI Cost" value={`$${report.aiTotalCost.toFixed(2)}`} mono />
         <MiniStat icon={CheckCircle2} label="Tasks Done" value={`${report.tasksCompleted}/${report.tasksAssigned}`} />
       </div>
-
-      {/* Lines changed */}
-      {(report.linesAdded > 0 || report.linesRemoved > 0) && (
-        <div className="mt-3 pt-3 border-t border-[var(--border-primary)] flex items-center gap-3">
-          <Code2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-          <span className="text-xs font-mono text-emerald-400">+{report.linesAdded}</span>
-          <span className="text-xs font-mono text-red-400">-{report.linesRemoved}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -416,12 +394,12 @@ function MiniStat({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <Icon className="h-3.5 w-3.5 text-[var(--text-muted)] shrink-0" />
+      <Icon className="h-3.5 w-3.5 text-text-muted shrink-0" />
       <div>
-        <p className={`text-sm font-semibold text-[var(--text-primary)] ${mono ? 'font-mono' : ''}`}>
+        <p className={`text-sm font-semibold text-text-primary ${mono ? 'font-mono' : ''}`}>
           {value}
         </p>
-        <p className="text-xs text-[var(--text-muted)]">{label}</p>
+        <p className="text-xs text-text-muted">{label}</p>
       </div>
     </div>
   );
@@ -433,7 +411,7 @@ function WeeklyReport({ data }: { data: WeeklyData }) {
   return (
     <div className="space-y-6">
       {/* Team overview stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <WeeklyStatCard
           icon={GitCommit}
           label="Total Commits"
@@ -452,28 +430,21 @@ function WeeklyReport({ data }: { data: WeeklyData }) {
           value={String(teamStats.totalTasksCompleted)}
           color="text-emerald-400"
         />
-        <WeeklyStatCard
-          icon={DollarSign}
-          label="AI Spend"
-          value={`$${teamStats.totalAiCost.toFixed(2)}`}
-          color="text-yellow-400"
-          mono
-        />
       </div>
 
       {/* Top insights */}
       {topInsights.length > 0 && (
-        <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5">
+        <div className="bg-bg-card border border-border-primary rounded-lg p-5">
           <div className="flex items-center gap-2 mb-3">
             <Lightbulb className="h-4 w-4 text-yellow-400" />
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-text-muted">
               Key Insights
             </h2>
           </div>
           <ul className="space-y-2">
             {topInsights.map((insight, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-[var(--text-secondary)]">
-                <TrendingUp className="h-3.5 w-3.5 text-[var(--text-muted)] mt-0.5 shrink-0" />
+              <li key={i} className="flex items-start gap-2 text-sm text-text-secondary">
+                <TrendingUp className="h-3.5 w-3.5 text-text-muted mt-0.5 shrink-0" />
                 {insight}
               </li>
             ))}
@@ -484,8 +455,8 @@ function WeeklyReport({ data }: { data: WeeklyData }) {
       {/* Per-developer breakdown */}
       <div>
         <div className="flex items-center gap-2 mb-4">
-          <Users className="h-4 w-4 text-[var(--text-muted)]" />
-          <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+          <Users className="h-4 w-4 text-text-muted" />
+          <h2 className="text-lg font-semibold text-text-primary">
             Developer Breakdown
           </h2>
         </div>
@@ -493,36 +464,26 @@ function WeeklyReport({ data }: { data: WeeklyData }) {
           {developerStats.map(dev => (
             <div
               key={dev.developerId}
-              className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-colors"
+              className="bg-bg-card border border-border-primary rounded-lg p-5 hover:border-border-hover transition-colors"
             >
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                <h3 className="text-sm font-semibold text-text-primary">
                   {dev.developerName}
                 </h3>
-                <span className="text-xs text-[var(--text-muted)]">
+                <span className="text-xs text-text-muted">
                   {dev.daysActive}/7 days active
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <MiniStat icon={GitCommit} label="Commits" value={dev.commits} />
                 <MiniStat icon={GitPullRequest} label="PRs" value={dev.prsMerged} />
                 <MiniStat icon={Eye} label="Reviews" value={dev.reviews} />
-                <MiniStat icon={Bot} label="AI Sessions" value={dev.aiSessions} />
-                <MiniStat icon={DollarSign} label="AI Cost" value={`$${dev.aiCost.toFixed(2)}`} mono />
                 <MiniStat
                   icon={CheckCircle2}
                   label="Tasks"
                   value={`${dev.tasksCompleted}/${dev.tasksAssigned}`}
                 />
               </div>
-              {dev.aiAvgPromptScore != null && (
-                <div className="mt-3 pt-3 border-t border-[var(--border-primary)] flex items-center gap-2">
-                  <span className="text-xs text-[var(--text-muted)]">Avg Prompt Score:</span>
-                  <span className={`text-xs font-mono font-bold ${getScoreColor(dev.aiAvgPromptScore)}`}>
-                    {dev.aiAvgPromptScore}
-                  </span>
-                </div>
-              )}
             </div>
           ))}
         </div>
@@ -530,8 +491,8 @@ function WeeklyReport({ data }: { data: WeeklyData }) {
 
       {/* Weekly alerts */}
       {alerts.length > 0 && (
-        <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+        <div className="bg-bg-card border border-border-primary rounded-lg p-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-text-muted mb-3">
             Alerts This Week
           </h2>
           <div className="space-y-2">
@@ -548,7 +509,7 @@ function WeeklyReport({ data }: { data: WeeklyData }) {
                   <span className={`text-xs font-medium uppercase ${sevColor}`}>
                     {alert.severity}
                   </span>
-                  <span className="text-[var(--text-secondary)]">{alert.title}</span>
+                  <span className="text-text-secondary">{alert.title}</span>
                 </div>
               );
             })}
@@ -573,12 +534,12 @@ function WeeklyStatCard({
   mono?: boolean;
 }) {
   return (
-    <div className="bg-[var(--bg-card)] border border-[var(--border-primary)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-colors">
+    <div className="bg-bg-card border border-border-primary rounded-lg p-5 hover:border-border-hover transition-colors">
       <div className="flex items-center gap-2 mb-3">
         <Icon className={`h-4 w-4 ${color}`} />
-        <span className="text-xs text-[var(--text-muted)] uppercase tracking-wider">{label}</span>
+        <span className="text-xs text-text-muted uppercase tracking-wider">{label}</span>
       </div>
-      <p className={`text-2xl font-bold text-[var(--text-primary)] ${mono ? 'font-mono' : ''}`}>
+      <p className={`text-2xl font-bold text-text-primary ${mono ? 'font-mono' : ''}`}>
         {value}
       </p>
     </div>

@@ -74,17 +74,28 @@ const MODEL_PRICING: ModelPricing[] = [
 ];
 
 /**
+ * Normalize a model ID by stripping context-window suffixes like [1m], [200k].
+ * Claude Code appends these to model IDs (e.g. "claude-opus-4-6[1m]").
+ */
+export function normalizeModelId(modelId: string): string {
+  return modelId.replace(/\[\d+[km]?\]$/i, '').trim();
+}
+
+/**
  * Get pricing info for a model by ID or partial match.
  */
 export function getModelPricing(modelId: string): ModelPricing | null {
-  // Exact match first
-  const exact = MODEL_PRICING.find(m => m.id === modelId);
+  // Normalize first — strip context-window suffixes like [1m]
+  const cleanId = normalizeModelId(modelId);
+
+  // Exact match on cleaned ID
+  const exact = MODEL_PRICING.find(m => m.id === cleanId);
   if (exact) return exact;
 
   // Partial match (e.g., "sonnet" matches "claude-sonnet-4-6")
-  const normalized = modelId.toLowerCase();
+  const normalized = cleanId.toLowerCase();
   return MODEL_PRICING.find(m =>
-    m.id.includes(normalized) || m.name.toLowerCase().includes(normalized)
+    m.id.includes(normalized) || normalized.includes(m.id) || m.name.toLowerCase().includes(normalized)
   ) ?? null;
 }
 
