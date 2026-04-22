@@ -91,8 +91,15 @@ export async function upsertUserIntegration(
   admin: SupabaseClient,
   input: UpsertUserIntegrationInput
 ): Promise<UserIntegrationRow> {
-  const accessBlob = encryptToken(input.tokens.accessToken);
-  const refreshBlob = input.tokens.refreshToken ? encryptToken(input.tokens.refreshToken) : null;
+  // Supabase JS posts the upsert body as JSON; a raw Buffer would be
+  // serialized as `{"type":"Buffer","data":[...]}` and stored byte-for-byte
+  // in the BYTEA column, which then fails AES-GCM auth on read. Encode as
+  // the Postgres BYTEA hex literal so the server decodes it to real bytes.
+  const toByteaHex = (buf: Buffer) => '\\x' + buf.toString('hex');
+  const accessBlob = toByteaHex(encryptToken(input.tokens.accessToken));
+  const refreshBlob = input.tokens.refreshToken
+    ? toByteaHex(encryptToken(input.tokens.refreshToken))
+    : null;
 
   const payload = {
     team_id: input.teamId,
