@@ -22,7 +22,7 @@ interface TimelineEvent {
   description: string;
   developerName: string;
   metadata: Record<string, unknown> | null;
-  createdAt: string;
+  occurredAt: string;
 }
 
 interface DeveloperTimelineProps {
@@ -141,7 +141,7 @@ function TimelineEventItem({ event }: { event: TimelineEvent }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted">{formatTime(event.createdAt)}</span>
+            <span className="text-xs text-text-muted">{formatTime(event.occurredAt)}</span>
             <span className="text-xs">{emoji}</span>
           </div>
 
@@ -372,7 +372,7 @@ export default function DeveloperTimeline({ developerId }: DeveloperTimelineProp
   const groupedEvents: { date: string; events: TimelineEvent[] }[] = [];
   let currentDate = '';
   for (const event of consolidated) {
-    const date = event.createdAt.slice(0, 10);
+    const date = event.occurredAt.slice(0, 10);
     if (date !== currentDate) {
       currentDate = date;
       groupedEvents.push({ date, events: [event] });

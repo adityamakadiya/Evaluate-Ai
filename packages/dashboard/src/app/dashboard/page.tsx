@@ -42,7 +42,7 @@ interface TimelineEvent {
   description: string;
   developerName: string;
   metadata: Record<string, unknown> | null;
-  createdAt: string;
+  occurredAt: string;
 }
 
 interface Alert {
@@ -441,7 +441,7 @@ function ActivityFeedItem({ event }: { event: TimelineEvent }) {
         )}
 
         <p className="text-xs text-text-muted mt-0.5">
-          {event.developerName} {'\u00B7'} {timeAgo(event.createdAt)}
+          {event.developerName} {'\u00B7'} {timeAgo(event.occurredAt)}
         </p>
       </div>
     </div>

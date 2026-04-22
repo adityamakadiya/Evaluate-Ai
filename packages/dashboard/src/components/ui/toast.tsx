@@ -100,7 +100,7 @@ function ToastViewport({
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed top-4 right-4 z-[100] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2 sm:w-96"
+      className="pointer-events-none fixed top-4 right-4 z-100 flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2 sm:w-96"
     >
       {toasts.map((t) => (
         <ToastItem key={t.id} toast={t} onDismiss={onDismiss} />
@@ -149,7 +149,7 @@ function ToastItem({
       className={`pointer-events-auto animate-section flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur-sm ${className}`}
     >
       <Icon className={`h-4 w-4 shrink-0 mt-0.5 ${iconClass}`} />
-      <p className="flex-1 leading-snug break-words">{toast.message}</p>
+      <p className="flex-1 leading-snug wrap-break-word">{toast.message}</p>
       <button
         type="button"
         onClick={() => onDismiss(toast.id)}

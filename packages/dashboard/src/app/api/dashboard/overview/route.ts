@@ -81,9 +81,12 @@ export async function GET() {
 
     let timelineQuery = supabase
       .from('activity_timeline')
-      .select('id, event_type, title, description, developer_id, metadata, created_at')
+      .select('id, event_type, title, description, developer_id, metadata, occurred_at')
       .eq('team_id', teamId)
-      .order('created_at', { ascending: false })
+      // Sort by the real event time, not the DB insertion time — a bulk
+      // backfill inserts many rows within the same second.
+      .order('occurred_at', { ascending: false })
+      .order('id', { ascending: false })
       .limit(20);
     if (scope === 'self') timelineQuery = timelineQuery.eq('developer_id', memberId);
 
@@ -174,7 +177,7 @@ export async function GET() {
       description: e.description,
       developerName: e.developer_id ? (timelineDevNames[e.developer_id] ?? null) : null,
       metadata: e.metadata,
-      createdAt: e.created_at,
+      occurredAt: e.occurred_at,
     }));
 
     const alerts = alertData.map(a => ({

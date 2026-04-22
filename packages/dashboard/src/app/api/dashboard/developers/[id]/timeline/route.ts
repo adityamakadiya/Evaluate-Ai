@@ -40,10 +40,15 @@ export async function GET(
 
     let query = supabase
       .from('activity_timeline')
-      .select('id, event_type, title, description, developer_id, metadata, created_at', { count: 'exact' })
+      .select('id, event_type, title, description, developer_id, metadata, occurred_at', { count: 'exact' })
       .eq('developer_id', developerId);
     if (teamId) query = query.eq('team_id', teamId);
-    query = query.order('created_at', { ascending: false });
+    // Sort by the real event time, not the DB insertion time — a bulk backfill
+    // inserts many rows within the same second. `id` is a tiebreaker so
+    // pagination stays stable across events that share an occurred_at.
+    query = query
+      .order('occurred_at', { ascending: false })
+      .order('id', { ascending: false });
 
     // Apply filter
     if (filterType && VALID_FILTERS.has(filterType)) {
@@ -76,7 +81,7 @@ export async function GET(
       description: e.description,
       developerName,
       metadata: e.metadata,
-      createdAt: e.created_at,
+      occurredAt: e.occurred_at,
     }));
 
     return NextResponse.json({ events, total: count ?? 0 });
