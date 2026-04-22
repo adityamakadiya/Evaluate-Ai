@@ -33,6 +33,7 @@ import {
   decryptRefreshToken,
   getActiveUserIntegration,
   getActiveUserIntegrations,
+  markIntegrationStatus,
   upsertUserIntegration,
   type UserIntegrationRow,
 } from './user-integrations';
@@ -47,11 +48,11 @@ import { logIntegration } from './logger';
  * doesn't leak which flow or which table was consulted.
  */
 export class TokenUnavailableError extends Error {
-  readonly code: 'not_connected' | 'expired_no_refresh';
+  readonly code: 'not_connected' | 'expired_no_refresh' | 'decrypt_failed';
   readonly userFacingMessage: string;
 
   constructor(
-    code: 'not_connected' | 'expired_no_refresh',
+    code: 'not_connected' | 'expired_no_refresh' | 'decrypt_failed',
     provider: ProviderSlug,
     scope: 'current_user' | 'any_team_member'
   ) {
@@ -61,11 +62,65 @@ export class TokenUnavailableError extends Error {
         ? scope === 'current_user'
           ? `You haven't connected ${label}. Connect your account to continue.`
           : `No ${label} account on your team has access. Ask a teammate to connect.`
-        : `${label} session expired. Please reconnect to continue.`;
+        : code === 'expired_no_refresh'
+          ? `${label} session expired. Please reconnect to continue.`
+          : `Your stored ${label} credentials are unreadable (likely an encryption-key change). Please reconnect.`;
     super(msg);
     this.name = 'TokenUnavailableError';
     this.code = code;
     this.userFacingMessage = msg;
+  }
+}
+
+/**
+ * Node's AES-GCM decipher throws `"Unsupported state or unable to authenticate
+ * data"` when the auth tag doesn't match — almost always a sign that the
+ * ciphertext was written under a different EVALUATEAI_ENCRYPTION_KEY. We
+ * detect this and surface a reconnect prompt instead of a raw 500.
+ */
+function isDecryptFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message || '';
+  return (
+    msg.includes('Unsupported state or unable to authenticate data') ||
+    msg.includes('decryptToken:') ||
+    // Node prefixes with the OpenSSL error class for some build configs.
+    msg.includes('bad decrypt')
+  );
+}
+
+/**
+ * Attempt to decrypt the access token. On auth-tag / key-mismatch failure,
+ * mark the row `status = 'error'` so the team sees "Reconnect" on the UI
+ * and sync doesn't keep picking this token, then throw a user-facing
+ * TokenUnavailableError. Other errors (unexpected) bubble up as-is.
+ */
+async function decryptAccessTokenOrFail(
+  admin: SupabaseClient,
+  row: UserIntegrationRow,
+  provider: ProviderSlug,
+  scope: 'current_user' | 'any_team_member'
+): Promise<string> {
+  try {
+    return decryptAccessToken(row);
+  } catch (err) {
+    if (isDecryptFailure(err)) {
+      await markIntegrationStatus(admin, row.id, 'error', 'decrypt_failed').catch(() => {
+        // Best-effort — if even the status update fails we still want to
+        // return the friendly error, not swallow it in a secondary crash.
+      });
+      logIntegration({
+        team_id: row.team_id,
+        user_id: row.user_id,
+        provider,
+        action: 'decrypt_access_token',
+        outcome: 'error',
+        user_integration_id: row.id,
+        error_message: 'decrypt_failed (likely key mismatch)',
+      });
+      throw new TokenUnavailableError('decrypt_failed', provider, scope);
+    }
+    throw err;
   }
 }
 
@@ -100,12 +155,22 @@ function isExpired(row: UserIntegrationRow): boolean {
 async function refreshV2Token(
   admin: SupabaseClient,
   row: UserIntegrationRow,
-  provider: ProviderSlug
+  provider: ProviderSlug,
+  scope: 'current_user' | 'any_team_member'
 ): Promise<string> {
-  const refresh = decryptRefreshToken(row);
+  let refresh: string | null;
+  try {
+    refresh = decryptRefreshToken(row);
+  } catch (err) {
+    if (isDecryptFailure(err)) {
+      await markIntegrationStatus(admin, row.id, 'error', 'decrypt_failed').catch(() => {});
+      throw new TokenUnavailableError('decrypt_failed', provider, scope);
+    }
+    throw err;
+  }
   const adapter = getProvider(provider);
   if (!refresh || !adapter.refreshToken) {
-    throw new TokenUnavailableError('expired_no_refresh', provider, 'current_user');
+    throw new TokenUnavailableError('expired_no_refresh', provider, scope);
   }
 
   const refreshed = await adapter.refreshToken(refresh);
@@ -168,7 +233,7 @@ export async function resolveCurrentUserToken({
   }
 
   if (isExpired(row)) {
-    const newAccess = await refreshV2Token(admin, row, provider);
+    const newAccess = await refreshV2Token(admin, row, provider, 'current_user');
     return {
       accessToken: newAccess,
       userIntegrationId: row.id,
@@ -178,7 +243,7 @@ export async function resolveCurrentUserToken({
   }
 
   return {
-    accessToken: decryptAccessToken(row),
+    accessToken: await decryptAccessTokenOrFail(admin, row, provider, 'current_user'),
     userIntegrationId: row.id,
     externalAccountHandle: row.external_account_handle,
     flow: 'v2',
@@ -228,19 +293,20 @@ export async function resolveAnyTeamToken({
   });
 
   // Walk the ranked list — the first one that's valid (or successfully
-  // refreshable) wins. Swallow refresh failures and keep going so a single
-  // stuck token doesn't block a team-wide read.
+  // refreshable) wins. Swallow refresh/decrypt failures and keep going so a
+  // single stuck token doesn't block a team-wide read. A decrypt failure
+  // also marks the row `error` via the helpers so it stops being offered.
   for (const row of ranked) {
     try {
       if (!isExpired(row)) {
         return {
-          accessToken: decryptAccessToken(row),
+          accessToken: await decryptAccessTokenOrFail(admin, row, provider, 'any_team_member'),
           userIntegrationId: row.id,
           externalAccountHandle: row.external_account_handle,
           flow: 'v2',
         };
       }
-      const newAccess = await refreshV2Token(admin, row, provider);
+      const newAccess = await refreshV2Token(admin, row, provider, 'any_team_member');
       return {
         accessToken: newAccess,
         userIntegrationId: row.id,
