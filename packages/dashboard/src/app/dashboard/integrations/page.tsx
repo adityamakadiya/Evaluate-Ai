@@ -8,8 +8,6 @@ import {
   Mic,
   Trello,
   MessageSquare,
-  Check,
-  AlertCircle,
   Info,
   Plug,
   Search,
@@ -26,6 +24,7 @@ import { RepoPickerModal } from '@/components/integrations/repo-picker-modal';
 import { TeamCoverageRoster } from '@/components/integrations/team-coverage-roster';
 import { SyncProgress } from '@/components/integrations/sync-progress';
 import { OnboardingNudge } from '@/components/integrations/onboarding-nudge';
+import { useToast } from '@/components/ui/toast';
 import type {
   Integration,
   IntegrationCardDef,
@@ -108,6 +107,7 @@ function IntegrationsPage() {
   const teamId = authUser?.teamId ?? '';
   const userId = authUser?.id ?? '';
   const canManage = useCanAccess('owner', 'manager');
+  const toast = useToast();
 
   // Per-team feature flag: when v2 is on, any team member can connect their own
   // accounts; the read-only banner is suppressed; coverage roster + job-based
@@ -125,10 +125,6 @@ function IntegrationsPage() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [loading, setLoading] = useState(true);
   const [oauthUser, setOauthUser] = useState<string | null>(null);
-
-  // Messages
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Sync state
   const [githubSyncing, setGithubSyncing] = useState(false);
@@ -155,10 +151,27 @@ function IntegrationsPage() {
   // Search
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Autofill shield — Chrome ignores `autoComplete="off"` when it has a
+  // stored credential for the domain, so we keep the field `readOnly` until
+  // the user actually focuses it. The flag flips once and stays off for the
+  // rest of the session.
+  const [searchAutofillShielded, setSearchAutofillShielded] = useState(true);
+
   // Derived
   const isGitHubConnected = githubIntegration !== null;
   const isFirefliesConnected = firefliesIntegration !== null;
   const connectedCount = (isGitHubConnected ? 1 : 0) + (isFirefliesConnected ? 1 : 0);
+
+  // Providers the *current user* hasn't connected yet — drives the
+  // onboarding nudge. Computed from already-loaded parent state so the
+  // banner's visibility is decided synchronously with the page render
+  // (no second async probe, no post-paint jump).
+  const missingProviders = useMemo<Array<'github' | 'fireflies'>>(() => {
+    const missing: Array<'github' | 'fireflies'> = [];
+    if (!isGitHubConnected) missing.push('github');
+    if (!isFirefliesConnected) missing.push('fireflies');
+    return missing;
+  }, [isGitHubConnected, isFirefliesConnected]);
 
   const filteredCards = useMemo(() => {
     if (!searchQuery.trim()) return integrationCards;
@@ -180,8 +193,7 @@ function IntegrationsPage() {
     const error = searchParams.get('error');
 
     if (success === 'github_connected') {
-      setSuccessMsg('GitHub connected successfully! Select repositories to track.');
-      setTimeout(() => setSuccessMsg(null), 7000);
+      toast.success('GitHub connected successfully! Select repositories to track.', 7000);
     }
     if (error) {
       const errorMessages: Record<string, string> = {
@@ -190,10 +202,9 @@ function IntegrationsPage() {
         oauth_denied: 'GitHub authorization was denied. Please try again.',
         callback_failed: 'GitHub connection failed. Please try again.',
       };
-      setErrorMsg(errorMessages[error] ?? 'An error occurred');
-      setTimeout(() => setErrorMsg(null), 5000);
+      toast.error(errorMessages[error] ?? 'An error occurred');
     }
-  }, [searchParams]);
+  }, [searchParams, toast]);
 
   // ---------- Fetch integration statuses ----------
   useEffect(() => {
@@ -351,8 +362,7 @@ function IntegrationsPage() {
    */
   function guardWrite(): boolean {
     if (isV2 || canManage) return true;
-    setErrorMsg(READ_ONLY_MSG);
-    setTimeout(() => setErrorMsg(null), 4000);
+    toast.error(READ_ONLY_MSG);
     return false;
   }
 
@@ -381,7 +391,7 @@ function IntegrationsPage() {
       const res = await fetch(`/api/integrations/github/discover?team_id=${teamId}`);
       if (!res.ok) {
         const data = await res.json();
-        setErrorMsg(data.error ?? 'Failed to load repositories');
+        toast.error(data.error ?? 'Failed to load repositories');
         setShowRepoPicker(false);
         return;
       }
@@ -397,7 +407,7 @@ function IntegrationsPage() {
       }
       setSelectedRepos(tracked);
     } catch {
-      setErrorMsg('Failed to load repositories from GitHub');
+      toast.error('Failed to load repositories from GitHub');
       setShowRepoPicker(false);
     } finally {
       setRepoPickerLoading(false);
@@ -449,15 +459,14 @@ function IntegrationsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(data.error ?? 'Failed to save repo selection');
+        toast.error(data.error ?? 'Failed to save repo selection');
         return;
       }
 
       setShowRepoPicker(false);
-      setSuccessMsg(
+      toast.success(
         `Now tracking ${data.trackedCount} repositor${data.trackedCount === 1 ? 'y' : 'ies'}.`
       );
-      setTimeout(() => setSuccessMsg(null), 5000);
 
       const ghReposRes = await fetch(`/api/integrations/github/repos?team_id=${teamId}`);
       if (ghReposRes.ok) {
@@ -465,7 +474,7 @@ function IntegrationsPage() {
         setRepos(repoData.repos ?? []);
       }
     } catch {
-      setErrorMsg('Failed to save repo selection. Please try again.');
+      toast.error('Failed to save repo selection. Please try again.');
     } finally {
       setRepoPickerSaving(false);
     }
@@ -474,7 +483,7 @@ function IntegrationsPage() {
   async function handleSaveFirefliesKey() {
     if (!guardWrite()) return;
     if (!firefliesApiKey.trim()) {
-      setErrorMsg('Please enter your Fireflies API key');
+      toast.error('Please enter your Fireflies API key');
       return;
     }
 
@@ -488,7 +497,7 @@ function IntegrationsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(data.error ?? 'Failed to connect Fireflies');
+        toast.error(data.error ?? 'Failed to connect Fireflies');
         return;
       }
 
@@ -501,14 +510,14 @@ function IntegrationsPage() {
       });
       setShowFirefliesModal(false);
       setFirefliesApiKey('');
-      setSuccessMsg(
+      toast.success(
         data.accountName
           ? `Fireflies connected as ${data.accountName}! Configure the webhook to start capturing meetings.`
-          : 'Fireflies connected! Configure the webhook to start capturing meetings.'
+          : 'Fireflies connected! Configure the webhook to start capturing meetings.',
+        7000
       );
-      setTimeout(() => setSuccessMsg(null), 7000);
     } catch {
-      setErrorMsg('Failed to connect Fireflies. Please try again.');
+      toast.error('Failed to connect Fireflies. Please try again.');
     } finally {
       setFirefliesConnecting(false);
     }
@@ -519,7 +528,6 @@ function IntegrationsPage() {
     setConfirmDisconnect(null);
     setManageModalId(null);
     setDisconnecting(provider);
-    setErrorMsg(null);
     try {
       const res = await fetch('/api/integrations/disconnect', {
         method: 'POST',
@@ -529,7 +537,7 @@ function IntegrationsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(data.error ?? 'Failed to disconnect');
+        toast.error(data.error ?? 'Failed to disconnect');
         return;
       }
 
@@ -542,12 +550,11 @@ function IntegrationsPage() {
         setFirefliesLastSyncAt(null);
       }
 
-      setSuccessMsg(
+      toast.success(
         `${provider === 'github' ? 'GitHub' : 'Fireflies.ai'} disconnected successfully.`
       );
-      setTimeout(() => setSuccessMsg(null), 5000);
     } catch {
-      setErrorMsg('Failed to disconnect. Please try again.');
+      toast.error('Failed to disconnect. Please try again.');
     } finally {
       setDisconnecting(null);
     }
@@ -556,7 +563,6 @@ function IntegrationsPage() {
   async function handleGithubSync() {
     if (!guardWrite()) return;
     setGithubSyncing(true);
-    setErrorMsg(null);
     try {
       const res = await fetch('/api/integrations/github/sync', {
         method: 'POST',
@@ -566,7 +572,7 @@ function IntegrationsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(data.error ?? 'GitHub sync failed');
+        toast.error(data.error ?? 'GitHub sync failed');
         return;
       }
 
@@ -586,15 +592,15 @@ function IntegrationsPage() {
         parts.push(`${data.prsProcessed} PR${data.prsProcessed !== 1 ? 's' : ''}`);
 
       if (parts.length > 0) {
-        setSuccessMsg(
-          `Synced ${parts.join(' and ')} from ${data.reposSynced} repo${data.reposSynced !== 1 ? 's' : ''}.`
+        toast.success(
+          `Synced ${parts.join(' and ')} from ${data.reposSynced} repo${data.reposSynced !== 1 ? 's' : ''}.`,
+          7000
         );
       } else {
-        setSuccessMsg('All data already synced. No new commits or PRs found.');
+        toast.success('All data already synced. No new commits or PRs found.', 7000);
       }
-      setTimeout(() => setSuccessMsg(null), 7000);
     } catch {
-      setErrorMsg('Failed to sync GitHub data. Please try again.');
+      toast.error('Failed to sync GitHub data. Please try again.');
     } finally {
       // v2 path keeps the spinner until SyncProgress resolves; we only
       // clear here for the legacy synchronous path.
@@ -605,7 +611,6 @@ function IntegrationsPage() {
   async function handleFirefliesSync() {
     if (!guardWrite()) return;
     setFirefliesSyncing(true);
-    setErrorMsg(null);
     try {
       const res = await fetch('/api/integrations/fireflies/sync', {
         method: 'POST',
@@ -615,7 +620,7 @@ function IntegrationsPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(data.error ?? 'Sync failed');
+        toast.error(data.error ?? 'Sync failed');
         return;
       }
 
@@ -627,23 +632,24 @@ function IntegrationsPage() {
       setFirefliesLastSyncAt(data.syncedAt);
 
       if (data.meetingsProcessed > 0) {
-        setSuccessMsg(
+        toast.success(
           `Synced ${data.meetingsProcessed} new meeting${data.meetingsProcessed !== 1 ? 's' : ''}` +
             (data.tasksExtracted > 0
               ? ` with ${data.tasksExtracted} action item${data.tasksExtracted !== 1 ? 's' : ''} extracted`
               : '') +
-            `. ${data.meetingsSkipped > 0 ? `${data.meetingsSkipped} already synced.` : ''}`
+            `. ${data.meetingsSkipped > 0 ? `${data.meetingsSkipped} already synced.` : ''}`,
+          7000
         );
       } else if (data.meetingsFound === 0) {
-        setSuccessMsg('No new meetings found since last sync.');
+        toast.success('No new meetings found since last sync.', 7000);
       } else {
-        setSuccessMsg(
-          `All ${data.meetingsSkipped} meeting${data.meetingsSkipped !== 1 ? 's' : ''} already synced.`
+        toast.success(
+          `All ${data.meetingsSkipped} meeting${data.meetingsSkipped !== 1 ? 's' : ''} already synced.`,
+          7000
         );
       }
-      setTimeout(() => setSuccessMsg(null), 7000);
     } catch {
-      setErrorMsg('Failed to sync meetings. Please try again.');
+      toast.error('Failed to sync meetings. Please try again.');
     } finally {
       if (!activeSyncJob) setFirefliesSyncing(false);
     }
@@ -669,8 +675,7 @@ function IntegrationsPage() {
 
     // Surface a message so fast-completing syncs don't flicker silently.
     if (job.status === 'failed') {
-      setErrorMsg(job.error ?? 'Sync failed');
-      setTimeout(() => setErrorMsg(null), 8000);
+      toast.error(job.error ?? 'Sync failed', 8000);
       return;
     }
 
@@ -700,8 +705,7 @@ function IntegrationsPage() {
       if (usersTotal > 0) parts.push(`across ${usersTotal} connected user${usersTotal === 1 ? '' : 's'}`);
       if (usersFailed > 0) parts.push(`${usersFailed} failed`);
     }
-    setSuccessMsg(parts.join(' · '));
-    setTimeout(() => setSuccessMsg(null), 8000);
+    toast.success(parts.join(' · '), 8000);
   }
 
   // Get data for the manage modal
@@ -752,10 +756,20 @@ function IntegrationsPage() {
         <div className="relative max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
           <input
-            type="text"
+            type="search"
+            name="integration-search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => setSearchAutofillShielded(false)}
+            readOnly={searchAutofillShielded}
             placeholder="Search integrations..."
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-form-type="other"
             className="w-full rounded-lg border border-border-primary bg-bg-card pl-10 pr-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:border-purple-500 focus:outline-none transition-colors"
           />
         </div>
@@ -777,9 +791,10 @@ function IntegrationsPage() {
       )}
 
       {/* V2 onboarding nudge: dismissible; only renders for users on v2 teams
-          who haven't connected any provider yet. */}
-      {isV2 && teamId && userId && (
-        <OnboardingNudge teamId={teamId} currentUserId={userId} />
+          who haven't connected any provider yet. Gated on `!loading` so it
+          doesn't pop in after the rest of the page has painted. */}
+      {isV2 && teamId && !loading && missingProviders.length > 0 && (
+        <OnboardingNudge teamId={teamId} missingProviders={missingProviders} />
       )}
 
       {/* Active sync progress (v2). Rendered at the top so users don't have to
@@ -793,20 +808,6 @@ function IntegrationsPage() {
             jobId={activeSyncJob.jobId}
             onComplete={handleSyncJobComplete}
           />
-        </div>
-      )}
-
-      {/* Messages */}
-      {successMsg && (
-        <div className="mb-6 flex items-center gap-2 rounded-lg border border-emerald-800/50 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-300">
-          <Check className="h-4 w-4 shrink-0" />
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="mb-6 flex items-center gap-2 rounded-lg border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-300">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {errorMsg}
         </div>
       )}
 

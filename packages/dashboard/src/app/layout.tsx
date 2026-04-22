@@ -24,6 +24,7 @@ import {
   Shield,
 } from "lucide-react";
 import { AuthProvider, useAuth, useCanAccess } from "@/components/auth-provider";
+import { ToastProvider } from "@/components/ui/toast";
 import "./globals.css";
 
 const inter = Inter({
@@ -312,7 +313,9 @@ export default function RootLayout({
       </head>
       <body suppressHydrationWarning className="min-h-full flex bg-bg-primary text-text-primary">
         <AuthProvider>
-          <AppShell>{children}</AppShell>
+          <ToastProvider>
+            <AppShell>{children}</AppShell>
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>

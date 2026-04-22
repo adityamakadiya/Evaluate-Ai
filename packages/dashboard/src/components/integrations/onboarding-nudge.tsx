@@ -1,75 +1,43 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Github, Mic, X, Sparkles } from 'lucide-react';
 
 export interface OnboardingNudgeProps {
   teamId: string;
-  currentUserId: string;
-}
-
-interface StatusPayload {
-  flow: 'v2' | 'legacy';
-  providers: Record<
-    'github' | 'fireflies',
-    {
-      members?: Array<{ userId: string; status: string }>;
-    }
-  >;
+  missingProviders: Array<'github' | 'fireflies'>;
 }
 
 /**
- * Dismissible banner shown to developers under a v2 team who haven't
- * connected any integration yet. Dismissal persists in localStorage keyed
- * by team so nagging stays off across sessions.
+ * Dismissible banner shown to developers under a v2 team who haven't connected
+ * one or more integrations yet. The parent decides *whether* to render this —
+ * so the banner doesn't do its own async status fetch (which previously caused
+ * the jumpy "pop in" after the page had already painted).
  *
- * Styled for dark theme — subtle purple-tinted card matching the app's
- * accent palette.
+ * Dismissal persists in localStorage keyed by team so nagging stays off across
+ * sessions. Styled for dark theme — subtle purple-tinted card matching the
+ * app's accent palette.
  */
-export function OnboardingNudge({ teamId, currentUserId }: OnboardingNudgeProps) {
+export function OnboardingNudge({ teamId, missingProviders }: OnboardingNudgeProps) {
   const dismissKey = `integrations-nudge:${teamId}:dismissed`;
-  const [visible, setVisible] = useState(false);
-  const [missingProviders, setMissingProviders] = useState<Array<'github' | 'fireflies'>>([]);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (typeof window !== 'undefined' && window.localStorage.getItem(dismissKey) === '1') {
-      return;
-    }
-    (async () => {
-      try {
-        const res = await fetch(`/api/integrations/status?team_id=${teamId}`);
-        if (!res.ok) return;
-        const data = (await res.json()) as StatusPayload;
-        if (data.flow !== 'v2') return;
-        const missing: Array<'github' | 'fireflies'> = [];
-        for (const slug of ['github', 'fireflies'] as const) {
-          const mine = data.providers[slug].members?.find((m) => m.userId === currentUserId);
-          if (!mine || mine.status !== 'active') missing.push(slug);
-        }
-        if (!cancelled && missing.length > 0) {
-          setMissingProviders(missing);
-          setVisible(true);
-        }
-      } catch {
-        // silent — nudge is non-critical
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [teamId, currentUserId, dismissKey]);
+  // Sync initializer avoids a flicker where the nudge briefly renders before
+  // the effect reads localStorage.
+  const [dismissed, setDismissed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(dismissKey) === '1';
+  });
 
-  if (!visible) return null;
+  if (dismissed || missingProviders.length === 0) return null;
 
   function handleDismiss() {
     window.localStorage.setItem(dismissKey, '1');
-    setVisible(false);
+    setDismissed(true);
   }
 
   return (
-    <div className="mb-6 rounded-lg border border-purple-800/40 bg-purple-900/10 px-4 py-3 flex items-start justify-between gap-3">
+    <div className="animate-section mb-6 rounded-lg border border-purple-800/40 bg-purple-900/10 px-4 py-3 flex items-start justify-between gap-3">
       <div className="flex items-start gap-3 min-w-0">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-purple-900/30 text-purple-400">
           <Sparkles className="h-4 w-4" />
@@ -101,6 +69,7 @@ export function OnboardingNudge({ teamId, currentUserId }: OnboardingNudgeProps)
         </div>
       </div>
       <button
+        type="button"
         onClick={handleDismiss}
         className="shrink-0 text-text-muted hover:text-text-primary transition-colors p-1 -m-1"
         aria-label="Dismiss"

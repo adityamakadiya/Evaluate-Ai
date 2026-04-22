@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { X, Check, Unplug, Loader2 } from 'lucide-react';
 
 // ---------- Fireflies Connect Modal ----------
@@ -19,6 +20,11 @@ export function FirefliesConnectModal({
   onConnect,
   onClose,
 }: FirefliesConnectModalProps) {
+  // Autofill shield — Chrome insists on filling type="password" inputs on
+  // any domain where it has a saved credential, regardless of autoComplete.
+  // Keeping the field `readOnly` until first focus blocks autofill cleanly;
+  // once the user clicks in, it behaves like any normal input.
+  const [autofillShielded, setAutofillShielded] = useState(true);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="bg-bg-card border border-border-primary rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
@@ -48,9 +54,19 @@ export function FirefliesConnectModal({
           </label>
           <input
             type="password"
+            name="fireflies-api-key"
             value={apiKey}
             onChange={(e) => onApiKeyChange(e.target.value)}
+            onFocus={() => setAutofillShielded(false)}
+            readOnly={autofillShielded}
             placeholder="Enter your Fireflies API key..."
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-form-type="other"
             className="w-full rounded-lg border border-border-primary bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-purple-500 focus:outline-none"
             onKeyDown={(e) => {
               if (e.key === 'Enter') onConnect();
